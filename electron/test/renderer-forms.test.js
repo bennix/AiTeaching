@@ -56,3 +56,16 @@ test('student page selects an existing course and shows all course materials', (
   assert.match(studentSource, /data\.materials\.map/);
   assert.doesNotMatch(studentSource, /data\.materials\.filter\(\(item\) => !lesson/);
 });
+
+test('teacher analytics view exposes filters, charts, student detail and AI report generation', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  assert.match(html, /data-view="analytics"/);
+  for (const id of ['analytics-course', 'analytics-class', 'analytics-lesson', 'analytics-trend-chart', 'analytics-knowledge-chart', 'analytics-student-table', 'analytics-report-content']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(source, /api\(`\/api\/analytics/);
+  assert.match(source, /api\('\/api\/analytics\/report'/);
+  assert.match(source, /function renderTrendChart/);
+  assert.match(source, /function renderKnowledgeChart/);
+  assert.match(source, /RichText\.render\(\$\('#analytics-report-content'\)/);
+});

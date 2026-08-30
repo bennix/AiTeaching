@@ -5,7 +5,7 @@
   <meta name="viewport" content="width=device-width,initial-scale=1">
   <meta name="theme-color" content="#101c36">
   <title>AI 教学助手 — 从教案到完整教学闭环</title>
-  <meta name="description" content="纯 Electron 桌面教学平台。导入 PDF、Word 或 Markdown 教案，自动生成教学周方案、题库、课件、签到与个性化学习反馈。">
+  <meta name="description" content="纯 Electron 桌面教学平台。导入 PDF、Word 或 Markdown 教案，自动生成教学周方案、题库、课件，并用签到、作答和知识点图表形成 AI 学情分析。">
   <meta property="og:title" content="AI 教学助手 — 从教案到完整教学闭环">
   <meta property="og:description" content="一份教案，连接教师端、学生端和整个学期。支持 macOS、Windows 与 Linux。">
   <meta property="og:type" content="website">
@@ -23,6 +23,7 @@
     </a>
     <nav aria-label="主导航">
       <a href="#features">功能</a>
+      <a href="#insights">学情分析</a>
       <a href="#workflow">工作流</a>
       <a href="#download">下载</a>
       <a class="github-link" href="https://github.com/bennix/AiTeaching">GitHub</a>
@@ -35,7 +36,7 @@
       <div class="hero-copy">
         <div class="eyebrow"><span></span>为真实课堂设计的桌面 AI 工作台</div>
         <h1>把一份教案，变成<br><em>一整个学期的教学闭环</em></h1>
-        <p>导入 PDF、Word 或 Markdown。AI 教学助手会按教学周组织内容，连接教师备课、题目发放、学生签到、AI 批改与个性化学习反馈。</p>
+        <p>导入 PDF、Word 或 Markdown。AI 教学助手会按教学周组织内容，连接教师备课、题目发放、学生签到、AI 批改与班级学情分析。</p>
         <div class="hero-actions">
           <a class="button primary" href="https://github.com/bennix/AiTeaching/releases/latest">下载最新版</a>
           <a class="button ghost" href="https://github.com/bennix/AiTeaching">查看源代码 <span>↗</span></a>
@@ -65,14 +66,32 @@
         <article class="role-card teacher">
           <div class="role-icon">教</div><span class="role-label">教师端</span>
           <h3>从整学期规划到每周执行</h3>
-          <ul><li>单周 / 整学期教案导入与拆分</li><li>Markdown 与 LaTeX 教学内容渲染</li><li>按题型、题量、难度生成 AI 题库</li><li>学生名单、签到、诊断与邮件发送</li></ul>
+          <ul><li>单周 / 整学期教案导入与拆分</li><li>Markdown 与 LaTeX 教学内容渲染</li><li>按题型、题量、难度生成 AI 题库</li><li>签到、完成率与知识点掌握图表</li><li>AI 班级学情报告与个体学习诊断</li></ul>
         </article>
         <article class="role-card student">
           <div class="role-icon">学</div><span class="role-label">学生端</span>
           <h3>在浏览器中完成学习闭环</h3>
-          <ul><li>班级与学号登录，无需安装应用</li><li>按教学周查看讲义与课程资料</li><li>完整显示 Markdown 与 LaTeX 公式</li><li>签到、做题、AI 批改与学习诊断</li></ul>
+          <ul><li>课程、班级与学号登录，无需安装应用</li><li>按教学周查看讲义与课程资料</li><li>完整显示 Markdown 与 LaTeX 公式</li><li>签到、做题、AI 批改与学习诊断</li></ul>
         </article>
       </div>
+    </section>
+
+    <section class="section insight-section" id="insights">
+      <div class="section-heading left"><span>从记录到行动</span><h2>不只看到成绩，更看见哪里需要教</h2><p>签到、作答与题目知识点被放进同一个分析视图。教师可按课程、班级和教学周筛选，快速找到低完成率、薄弱知识点和需要跟进的学生。</p></div>
+      <div class="insight-dashboard" aria-label="班级学情分析界面示意">
+        <div class="insight-topbar"><div><i></i><i></i><i></i></div><strong>高一数学 · 一班 · 全部教学周</strong><span>AI 学情报告</span></div>
+        <div class="insight-metrics">
+          <article><small>纳入学生</small><b>42</b><em>16 个课次</em></article>
+          <article><small>签到率</small><b>92%</b><em>618 / 672 人次</em></article>
+          <article><small>作答完成率</small><b>86%</b><em>已发放题目</em></article>
+          <article><small>作答正确率</small><b>74%</b><em>仅实际作答</em></article>
+        </div>
+        <div class="insight-panels">
+          <article class="trend-demo"><div><strong>教学周趋势</strong><span>签到　完成　正确</span></div><svg viewBox="0 0 560 190" role="img" aria-label="教学周指标趋势示意图"><g class="demo-grid"><line x1="35" y1="30" x2="535" y2="30"/><line x1="35" y1="95" x2="535" y2="95"/><line x1="35" y1="160" x2="535" y2="160"/></g><polyline class="demo-attendance" points="35,55 135,48 235,60 335,42 435,50 535,35"/><polyline class="demo-completion" points="35,92 135,78 235,86 335,64 435,58 535,51"/><polyline class="demo-accuracy" points="35,118 135,105 235,112 335,88 435,96 535,75"/></svg></article>
+          <article class="mastery-demo"><strong>薄弱知识点</strong><div><span>函数单调性</span><i><b style="width:48%"></b></i><em>48%</em></div><div><span>集合运算</span><i><b style="width:63%"></b></i><em>63%</em></div><div><span>定义域</span><i><b style="width:78%"></b></i><em>78%</em></div><p><b>AI 建议</b> 下周先用分层例题复习函数单调性，并优先跟进 6 名低完成率学生。</p></article>
+        </div>
+      </div>
+      <p class="metric-note">数据口径透明：未作答影响完成率，但不会被当作答错；知识点掌握度只基于实际作答，并显示样本量。</p>
     </section>
 
     <section class="section workflow-section" id="workflow">
@@ -94,7 +113,7 @@
       <div class="section-heading"><span>多平台原生安装包</span><h2>选择你的系统，开始教学</h2><p>正式版本通过 GitHub Releases 发布，macOS 版本签名并经 Apple 公证。</p></div>
       <div class="download-grid">
         <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark"></div><div><h3>macOS</h3><p>Universal DMG · Apple Silicon + Intel</p></div><b>↓</b></a>
-        <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark windows">⊞</div><div><h3>Windows</h3><p>签名 EXE · 安装版与便携版</p></div><b>↓</b></a>
+        <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark windows">⊞</div><div><h3>Windows</h3><p>EXE · 安装版与便携版</p></div><b>↓</b></a>
         <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark ubuntu">◉</div><div><h3>Ubuntu / Debian</h3><p>DEB · AppImage</p></div><b>↓</b></a>
         <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark rpm">◆</div><div><h3>Fedora / RHEL</h3><p>RPM</p></div><b>↓</b></a>
       </div>

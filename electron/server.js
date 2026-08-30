@@ -9,10 +9,12 @@ const readXlsxFile = require('read-excel-file/node');
 const { JsonStore } = require('./lib/store');
 const { buildLessonRecords, extractDocumentText } = require('./lib/documents');
 const { normalizeUploadFilename } = require('./lib/filenames');
+const { buildLearningAnalytics, reportScopeKey } = require('./lib/analytics');
 const {
   fetchModels,
   generateExercises,
   generateExercisesForBlueprint,
+  generateClassLearningReport,
   generateStudentReport,
   generateWeeklyPlan,
   gradeAnswer,
@@ -511,6 +513,35 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
           lanUrls: getLanUrls(activePort),
           port: activePort,
         });
+      }
+      if (request.method === 'GET' && pathname === '/api/analytics') {
+        return sendJson(response, 200, buildLearningAnalytics(store.state, {
+          courseName: url.searchParams.get('courseName') || '',
+          className: url.searchParams.get('className') || '',
+          lessonId: url.searchParams.get('lessonId') || '',
+        }));
+      }
+      if (request.method === 'POST' && pathname === '/api/analytics/report') {
+        const body = await readJson(request);
+        const filters = {
+          courseName: body.courseName || '', className: body.className || '', lessonId: body.lessonId || '',
+        };
+        const analytics = buildLearningAnalytics(store.state, filters);
+        if (!analytics.summary.studentCount) throw new Error('当前筛选范围没有学生，无法生成学情报告');
+        if (!analytics.summary.lessonCount) throw new Error('当前筛选范围没有已完成课次，无法生成学情报告');
+        if (!store.getSettings().hasApiKey) throw new Error('请先在 AI 设置中保存 API Key');
+        const markdown = await generateClassLearningReport(store.getSettings({ includeKey: true }), analytics);
+        const scope = analytics.filters;
+        const scopeKey = reportScopeKey(scope);
+        const existing = store.state.classReports.find((report) => report.scopeKey === scopeKey);
+        const report = {
+          id: existing?.id || crypto.randomUUID(), scopeKey,
+          courseName: scope.courseName, className: scope.className, lessonId: scope.lessonId,
+          markdown, summary: analytics.summary, createdAt: new Date().toISOString(),
+        };
+        if (existing) Object.assign(existing, report); else store.state.classReports.push(report);
+        store.save();
+        return sendJson(response, 200, { ok: true, report });
       }
       if (request.method === 'GET' && pathname.startsWith('/api/lessons/')) {
         const id = pathname.slice('/api/lessons/'.length);

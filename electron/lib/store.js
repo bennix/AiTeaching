@@ -29,6 +29,7 @@ const DEFAULT_STATE = {
   materials: [],
   classMaterials: [],
   studentReports: [],
+  classReports: [],
 };
 
 function clone(value) {
@@ -89,6 +90,7 @@ class JsonStore {
         materials: Array.isArray(saved.materials) ? saved.materials : [],
         classMaterials: Array.isArray(saved.classMaterials) ? saved.classMaterials : [],
         studentReports: Array.isArray(saved.studentReports) ? saved.studentReports : [],
+        classReports: Array.isArray(saved.classReports) ? saved.classReports : [],
       };
     } catch {
       return clone(DEFAULT_STATE);

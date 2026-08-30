@@ -1,8 +1,9 @@
-const state = { data: null, activeLesson: null, activeTab: 'ai', poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
+const state = { data: null, analytics: null, analyticsFilters: {}, activeLesson: null, activeTab: 'ai', poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
 const viewMeta = {
   lessons: ['教案与教学周', '管理单周教案与整学期教学安排'],
   import: ['导入教案', '支持 PDF、Word 和 Markdown 教案'],
   students: ['学生与班级', '管理名单、学习记录与个性化诊断'],
+  analytics: ['签到与学情', '用真实签到和作答数据分析班级学习情况'],
   settings: ['AI 设置', '指定 BaseURL 并选择模型'],
   network: ['局域网服务', '让同一网络中的设备访问本程序'],
 };
@@ -35,6 +36,7 @@ function showView(name) {
   $$('.view').forEach((item) => item.classList.toggle('active', item.id === `view-${name}`));
   $('#page-title').textContent = viewMeta[name][0];
   $('#page-subtitle').textContent = viewMeta[name][1];
+  if (name === 'analytics') loadAnalytics().catch((error) => toast(error.message, true));
 }
 
 function statusLabel(status, stage, warning = '') {
@@ -125,6 +127,98 @@ function renderStudents() {
   $$('[data-email-student]').forEach((button) => button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/students/${encodeURIComponent(button.dataset.emailStudent)}/email-report`, { method: 'POST' }); toast('学生报告邮件已发送'); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } }));
   $('#class-material-list').innerHTML = (state.data.classMaterials || []).map((item) => `<div class="student-card"><div><h3>${escapeHtml(item.filename)}</h3><p>${escapeHtml(item.courseName || '')} · ${escapeHtml(item.className || '')}</p></div><button class="button danger" data-delete-class-material="${escapeHtml(item.id)}">删除</button></div>`).join('');
   $$('[data-delete-class-material]').forEach((button) => button.addEventListener('click', async () => { try { await api(`/api/materials/${button.dataset.deleteClassMaterial}`, { method: 'DELETE' }); await refresh(); } catch (error) { toast(error.message, true); } }));
+}
+
+function analyticsOption(value, label, selected) {
+  return `<option value="${escapeHtml(value)}" ${value === selected ? 'selected' : ''}>${escapeHtml(label)}</option>`;
+}
+
+function setRateRing(selector, value, color) {
+  const rate = Math.max(0, Math.min(100, Number(value) || 0));
+  $(selector).style.background = `conic-gradient(${color} ${rate * 3.6}deg, #edf1f7 0)`;
+}
+
+function renderTrendChart(items) {
+  const node = $('#analytics-trend-chart');
+  if (!items.length) {
+    node.innerHTML = '<div class="empty">当前范围没有可展示的教学周数据。</div>';
+    return;
+  }
+  const width = 720; const height = 260; const left = 54; const right = 24; const top = 24; const bottom = 48;
+  const plotWidth = width - left - right; const plotHeight = height - top - bottom;
+  const x = (index) => items.length === 1 ? left + plotWidth / 2 : left + (index / (items.length - 1)) * plotWidth;
+  const y = (rate) => top + ((100 - Math.max(0, Math.min(100, rate))) / 100) * plotHeight;
+  const series = [
+    { key: 'attendanceRate', color: '#5b4df0' },
+    { key: 'completionRate', color: '#18a779' },
+    { key: 'accuracyRate', color: '#f59f37' },
+  ];
+  const grid = [0, 50, 100].map((rate) => `<line x1="${left}" y1="${y(rate)}" x2="${width - right}" y2="${y(rate)}"/><text x="${left - 12}" y="${y(rate) + 4}" text-anchor="end">${rate}%</text>`).join('');
+  const lines = series.map((item) => {
+    const points = items.map((row, index) => `${x(index)},${y(row[item.key])}`).join(' ');
+    const dots = items.map((row, index) => `<circle cx="${x(index)}" cy="${y(row[item.key])}" r="4"><title>${escapeHtml(row.title)}：${row[item.key]}%</title></circle>`).join('');
+    return `<g style="--series:${item.color}"><polyline points="${points}"/>${dots}</g>`;
+  }).join('');
+  const labels = items.map((row, index) => `<text class="week-label" x="${x(index)}" y="${height - 16}" text-anchor="middle">第 ${escapeHtml(row.week || '-')} 周</text>`).join('');
+  node.innerHTML = `<svg viewBox="0 0 ${width} ${height}" role="img" aria-label="教学周签到、作答完成率和正确率趋势图"><g class="chart-grid">${grid}</g>${lines}${labels}</svg>`;
+}
+
+function renderKnowledgeChart(items) {
+  const node = $('#analytics-knowledge-chart');
+  if (!items.length) {
+    node.innerHTML = '<div class="empty">还没有带知识点标注的实际作答，暂不能判断掌握度。</div>';
+    return;
+  }
+  node.innerHTML = items.slice(0, 10).map((item) => {
+    const level = item.masteryRate < 60 ? 'weak' : (item.masteryRate < 80 ? 'medium' : 'strong');
+    return `<div class="knowledge-row ${level}"><div><strong>${escapeHtml(item.name)}</strong><span>${item.correct}/${item.attempts} 次正确</span></div><div class="knowledge-track"><i style="width:${item.masteryRate}%"></i></div><b>${item.masteryRate}%</b></div>`;
+  }).join('');
+}
+
+function renderAnalytics() {
+  const analytics = state.analytics;
+  if (!analytics) return;
+  const { filters, summary, trends, knowledgePoints, students, latestReport } = analytics;
+  $('#analytics-course').innerHTML = filters.courses.length
+    ? filters.courses.map((course) => analyticsOption(course, course, filters.courseName)).join('')
+    : analyticsOption('', '暂无已完成课程', '', true);
+  $('#analytics-class').innerHTML = analyticsOption('', '全部班级', filters.className)
+    + filters.classes.map((className) => analyticsOption(className, className, filters.className)).join('');
+  $('#analytics-lesson').innerHTML = analyticsOption('', '全部教学周', filters.lessonId)
+    + filters.lessons.map((lesson) => analyticsOption(lesson.id, `第 ${lesson.teachingWeek || '-'} 周${lesson.date ? ` · ${lesson.date}` : ''}`, filters.lessonId)).join('');
+
+  $('#analytics-students').textContent = summary.studentCount;
+  $('#analytics-student-note').textContent = `${summary.lessonCount} 个课次 · ${summary.publishedExerciseCount} 道已发放题目`;
+  $('#analytics-attendance').textContent = `${summary.attendanceRate}%`;
+  $('#analytics-attendance-note').textContent = `${summary.attendancePresent} / ${summary.attendanceExpected} 人次`;
+  $('#analytics-completion').textContent = `${summary.completionRate}%`;
+  $('#analytics-completion-note').textContent = `${summary.answeredCount} / ${summary.assignmentCount} 题次`;
+  $('#analytics-accuracy').textContent = `${summary.accuracyRate}%`;
+  $('#analytics-accuracy-note').textContent = `${summary.correctCount} / ${summary.answeredCount} 次作答`;
+  setRateRing('#analytics-attendance-ring', summary.attendanceRate, '#5b4df0');
+  setRateRing('#analytics-completion-ring', summary.completionRate, '#18a779');
+  setRateRing('#analytics-accuracy-ring', summary.accuracyRate, '#f59f37');
+  renderTrendChart(trends);
+  renderKnowledgeChart(knowledgePoints);
+
+  $('#analytics-student-table').innerHTML = students.length ? `<table class="analytics-table"><thead><tr><th>学生</th><th>签到</th><th>完成</th><th>正确</th><th>薄弱知识点</th></tr></thead><tbody>${students.map((student) => `<tr><td><strong>${escapeHtml(student.name)}</strong><small>${escapeHtml(student.studentId)}</small></td><td><span class="metric-pill ${student.attendanceRate < 80 ? 'risk' : ''}">${student.attendanceRate}%</span><small>${student.attendancePresent}/${student.attendanceExpected} 人次</small></td><td><span class="metric-pill ${student.completionRate < 80 ? 'risk' : ''}">${student.completionRate}%</span><small>${student.answeredCount}/${student.assignmentCount} 题次</small></td><td><span class="metric-pill ${student.answeredCount && student.accuracyRate < 60 ? 'risk' : ''}">${student.accuracyRate}%</span><small>${student.correctCount}/${student.answeredCount} 次</small></td><td>${student.weakPoints.length ? student.weakPoints.map((point) => `<span class="weak-chip">${escapeHtml(point)}</span>`).join('') : '<span class="muted">暂无实际错题</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">当前筛选范围没有学生。</div>';
+  $('#analytics-report-meta').textContent = latestReport?.createdAt
+    ? `生成于 ${new Date(latestReport.createdAt).toLocaleString()} · 基于当前范围保存`
+    : '尚未生成报告；AI 会严格依据上方真实统计给出分析与建议';
+  RichText.render($('#analytics-report-content'), latestReport?.markdown || '', '点击“AI 生成学情报告”，获取薄弱知识点、重点关注学生与下一阶段教学建议。');
+}
+
+async function loadAnalytics(overrides = {}) {
+  state.analyticsFilters = { ...state.analyticsFilters, ...overrides };
+  const query = new URLSearchParams();
+  for (const key of ['courseName', 'className', 'lessonId']) if (state.analyticsFilters[key]) query.set(key, state.analyticsFilters[key]);
+  state.analytics = await api(`/api/analytics${query.size ? `?${query}` : ''}`);
+  state.analyticsFilters = {
+    courseName: state.analytics.filters.courseName,
+    className: state.analytics.filters.className,
+    lessonId: state.analytics.filters.lessonId,
+  };
+  renderAnalytics();
 }
 
 function renderNetwork() {
@@ -313,7 +407,33 @@ function renderDialogContent() {
 
 $$('.nav-item').forEach((item) => item.addEventListener('click', () => showView(item.dataset.view)));
 $$('[data-go]').forEach((item) => item.addEventListener('click', () => showView(item.dataset.go)));
-$('#refresh-button').addEventListener('click', () => refresh().catch((error) => toast(error.message, true)));
+$('#refresh-button').addEventListener('click', async () => {
+  try {
+    await refresh();
+    if ($('.nav-item.active')?.dataset.view === 'analytics') await loadAnalytics();
+  } catch (error) { toast(error.message, true); }
+});
+$('#analytics-course').addEventListener('change', (event) => loadAnalytics({ courseName: event.target.value, className: '', lessonId: '' }).catch((error) => toast(error.message, true)));
+$('#analytics-class').addEventListener('change', (event) => loadAnalytics({ className: event.target.value }).catch((error) => toast(error.message, true)));
+$('#analytics-lesson').addEventListener('change', (event) => loadAnalytics({ lessonId: event.target.value }).catch((error) => toast(error.message, true)));
+$('#analytics-refresh-button').addEventListener('click', (event) => {
+  event.currentTarget.disabled = true;
+  loadAnalytics().catch((error) => toast(error.message, true)).finally(() => { event.currentTarget.disabled = false; });
+});
+$('#analytics-report-button').addEventListener('click', async (event) => {
+  const button = event.currentTarget;
+  button.disabled = true;
+  button.textContent = 'AI 正在分析…';
+  try {
+    await api('/api/analytics/report', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(state.analyticsFilters),
+    });
+    await loadAnalytics();
+    toast('学情分析报告已生成并保存');
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; button.textContent = 'AI 生成学情报告'; }
+});
 
 function renderImportExerciseSettings() {
   const semester = document.querySelector('input[name="scope"]:checked')?.value === 'semester';

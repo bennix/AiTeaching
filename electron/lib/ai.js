@@ -464,11 +464,46 @@ async function generateStudentReport(settings, student, records) {
   return cleanAiText(aiContentText(payload?.choices?.[0]?.message?.content));
 }
 
+async function generateClassLearningReport(settings, analytics) {
+  const evidence = {
+    filters: analytics.filters,
+    summary: analytics.summary,
+    trends: analytics.trends,
+    knowledgePoints: analytics.knowledgePoints,
+    students: analytics.students.map((student) => ({
+      studentId: student.studentId,
+      name: student.name,
+      attendanceRate: student.attendanceRate,
+      completionRate: student.completionRate,
+      accuracyRate: student.accuracyRate,
+      answeredCount: student.answeredCount,
+      weakPoints: student.weakPoints,
+    })),
+  };
+  const prompt = `你是一名严谨的教学数据分析助手。请根据下面的真实统计数据生成中文 Markdown 学情分析报告。
+
+要求：
+1. 必须包含：核心结论、签到与参与、作答与正确率、薄弱知识点、重点关注学生、教学调整建议、下一阶段行动清单。
+2. 每个结论都要说明数据依据和样本量；区分事实、合理推断和数据不足。
+3. 未作答只影响完成率，不得当作答错；知识点掌握度只按实际作答统计。
+4. 不得虚构学生、题目、知识点或百分比。没有数据时明确写“数据不足”。
+5. 建议要具体、可执行、适合教师直接使用，避免空泛措辞。
+
+统计数据：
+${JSON.stringify(evidence).slice(0, 28000)}`;
+  const payload = await requestJson(endpoint(settings.baseUrl, '/chat/completions'), {
+    method: 'POST', headers: authHeaders(settings.apiKey),
+    body: JSON.stringify({ model: settings.model, messages: [{ role: 'user', content: prompt }], max_tokens: 3600 }),
+  });
+  return cleanAiText(aiContentText(payload?.choices?.[0]?.message?.content));
+}
+
 module.exports = {
   endpoint,
   fetchModels,
   generateExercises,
   generateExercisesForBlueprint,
+  generateClassLearningReport,
   generateStudentReport,
   generateWeeklyPlan,
   gradeAnswer,

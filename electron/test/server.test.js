@@ -2,6 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const crypto = require('node:crypto');
 const fs = require('node:fs');
+const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
 const { createLanServer } = require('../server');
@@ -128,4 +129,54 @@ test('学生可以选择已有课程并只读取所选课程的资料与已发�
   assert.deepEqual(englishState.body.materials.map((item) => item.id), ['english-material']);
   const crossCourseSubmit = await json(`${base}/api/student/submit`, { method: 'POST', headers: { Cookie: studentCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseId: 'math-exercise', answer: 'A' }) });
   assert.equal(crossCourseSubmit.response.status, 400);
+});
+
+test('教师可以查看班级学情图表数据并生成可保存的 AI 报告', async (context) => {
+  let aiRequest = null;
+  const aiServer = http.createServer(async (request, response) => {
+    let body = '';
+    for await (const chunk of request) body += chunk;
+    aiRequest = JSON.parse(body);
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ choices: [{ message: { content: '# 班级学情报告\n\n函数是当前薄弱知识点。' } }] }));
+  });
+  await new Promise((resolve) => aiServer.listen(0, '127.0.0.1', resolve));
+  context.after(() => aiServer.close());
+
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-analytics-'));
+  const rendererDir = path.join(__dirname, '..', 'renderer');
+  const server = await createLanServer({ runtimeDir, rendererDir, preferredPort: 0 });
+  context.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  server.store.updateSettings({
+    baseUrl: `http://127.0.0.1:${aiServer.address().port}/v1`, apiKey: 'test-key', model: 'test-model',
+  });
+  server.store.addLessons([{ id: 'week-1', title: '数学第 1 周', courseName: '数学', teachingWeek: 1, status: 'done' }]);
+  server.store.upsertStudent({ studentId: 'S1', name: '甲', courseName: '数学', className: '一班' });
+  server.store.addExercises([{ id: 'question-1', lessonId: 'week-1', published: true, type: 'choice', knowledgePoint: '函数' }]);
+  server.store.addAttendance({ id: 'attendance-1', lessonId: 'week-1', studentId: 'S1', status: 'present' });
+  server.store.addSubmission({ id: 'submission-1', exerciseId: 'question-1', studentId: 'S1', correct: false });
+
+  const login = await json(`${base}/api/auth/admin`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'admin' }),
+  });
+  const adminCookie = login.response.headers.get('set-cookie').split(';')[0];
+  const analytics = await json(`${base}/api/analytics?courseName=${encodeURIComponent('数学')}&className=${encodeURIComponent('一班')}`, { headers: { Cookie: adminCookie } });
+  assert.equal(analytics.body.summary.attendanceRate, 100);
+  assert.equal(analytics.body.summary.completionRate, 100);
+  assert.equal(analytics.body.summary.accuracyRate, 0);
+  assert.deepEqual(analytics.body.knowledgePoints.map((item) => item.name), ['函数']);
+
+  const generated = await json(`${base}/api/analytics/report`, {
+    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ courseName: '数学', className: '一班' }),
+  });
+  assert.equal(generated.body.ok, true);
+  assert.match(generated.body.report.markdown, /函数是当前薄弱知识点/);
+  assert.equal(server.store.state.classReports.length, 1);
+  assert.equal(aiRequest.model, 'test-model');
+  assert.match(aiRequest.messages[0].content, /未作答只影响完成率/);
+
+  const refreshed = await json(`${base}/api/analytics?courseName=${encodeURIComponent('数学')}&className=${encodeURIComponent('一班')}`, { headers: { Cookie: adminCookie } });
+  assert.match(refreshed.body.latestReport.markdown, /班级学情报告/);
 });

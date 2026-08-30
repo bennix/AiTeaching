@@ -21,6 +21,7 @@
         <button class="nav-item active" data-view="lessons">教案与教学周</button>
         <button class="nav-item" data-view="import">导入教案</button>
         <button class="nav-item" data-view="students">学生与班级</button>
+        <button class="nav-item" data-view="analytics">签到与学情</button>
         <button class="nav-item" data-view="settings">AI 设置</button>
         <button class="nav-item" data-view="network">局域网服务</button>
       </nav>
@@ -106,6 +107,47 @@
               <div id="class-material-list"></div>
             </form>
           </div>
+        </div>
+      </section>
+
+      <section id="view-analytics" class="view">
+        <div class="panel analytics-filter-panel">
+          <div class="panel-heading"><div><h2>班级学情驾驶舱</h2><p>按课程、班级或教学周查看签到、作答与知识点掌握情况</p></div><button id="analytics-report-button" class="button primary" type="button">AI 生成学情报告</button></div>
+          <div class="analytics-filters">
+            <label><span>课程</span><select id="analytics-course"></select></label>
+            <label><span>班级</span><select id="analytics-class"></select></label>
+            <label><span>统计范围</span><select id="analytics-lesson"></select></label>
+            <button id="analytics-refresh-button" class="button secondary" type="button">刷新数据</button>
+          </div>
+          <p class="analytics-definition">签到率按“学生 × 已完成课次”统计；完成率按已发放题目统计；正确率和知识点掌握度只计算实际作答。</p>
+        </div>
+
+        <div class="analytics-metrics">
+          <article><span>纳入学生</span><strong id="analytics-students">0</strong><small id="analytics-student-note">当前筛选范围</small></article>
+          <article class="rate-card"><div class="rate-ring" id="analytics-attendance-ring"><strong id="analytics-attendance">0%</strong></div><div><span>签到率</span><small id="analytics-attendance-note">0 / 0 人次</small></div></article>
+          <article class="rate-card"><div class="rate-ring" id="analytics-completion-ring"><strong id="analytics-completion">0%</strong></div><div><span>作答完成率</span><small id="analytics-completion-note">0 / 0 题次</small></div></article>
+          <article class="rate-card"><div class="rate-ring" id="analytics-accuracy-ring"><strong id="analytics-accuracy">0%</strong></div><div><span>作答正确率</span><small id="analytics-accuracy-note">0 / 0 次作答</small></div></article>
+        </div>
+
+        <div class="analytics-chart-grid">
+          <article class="panel chart-card">
+            <div class="chart-heading"><div><h2>教学周趋势</h2><p>签到、完成率与正确率变化</p></div><div class="chart-legend"><span class="attendance">签到</span><span class="completion">完成</span><span class="accuracy">正确</span></div></div>
+            <div id="analytics-trend-chart" class="trend-chart"></div>
+          </article>
+          <article class="panel chart-card">
+            <div class="chart-heading"><div><h2>知识点掌握度</h2><p>仅基于实际作答，按薄弱程度排序</p></div></div>
+            <div id="analytics-knowledge-chart" class="knowledge-chart"></div>
+          </article>
+        </div>
+
+        <div class="panel analytics-student-panel">
+          <div class="panel-heading"><div><h2>学生学习明细</h2><p>快速定位低签到、低完成与薄弱知识点</p></div></div>
+          <div id="analytics-student-table" class="analytics-table-wrap"></div>
+        </div>
+
+        <div class="panel analytics-report-panel">
+          <div class="panel-heading"><div><h2>AI 学情分析报告</h2><p id="analytics-report-meta">选择范围后，可基于当前真实统计生成报告</p></div><span class="badge">Markdown · LaTeX</span></div>
+          <div id="analytics-report-content" class="document-content markdown-body analytics-report-content"></div>
         </div>
       </section>
 
