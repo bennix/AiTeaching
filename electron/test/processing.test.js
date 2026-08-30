@@ -17,7 +17,7 @@ test('semester import persists a sequential queue and passes completed weeks int
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     const prompt = body.messages?.at(-1)?.content || '';
-    const weekly = !prompt.includes('只返回 JSON 数组');
+    const weekly = !prompt.includes('exercises 数组');
     if (weekly) {
       weeklyConcurrent += 1;
       maxWeeklyConcurrent = Math.max(maxWeeklyConcurrent, weeklyConcurrent);
@@ -51,7 +51,10 @@ test('semester import persists a sequential queue and passes completed weeks int
   });
   store.addLessons(lessons);
 
-  const processing = processLessons(store, lessons.map((item) => item.id));
+  const liveUpdates = [];
+  const processing = processLessons(store, lessons.map((item) => item.id), {
+    onUpdate: (update) => liveUpdates.push(JSON.parse(JSON.stringify(update))),
+  });
   assert.deepEqual(store.state.lessons.map((item) => item.status), ['processing', 'queued', 'queued', 'queued']);
   await processing;
   assert.deepEqual(store.state.lessons.map((item) => item.status), ['done', 'done', 'done', 'done']);
@@ -60,6 +63,10 @@ test('semester import persists a sequential queue and passes completed weeks int
   assert.match(weeklyPrompts[1], /第 1 周已整理方案/);
   assert.match(weeklyPrompts[3], /第 1 周已整理方案/);
   assert.match(weeklyPrompts[3], /第 3 周已整理方案/);
+  const exerciseUpdates = liveUpdates.filter((item) => item.processingStage === 'exercises' && item.exercises?.length);
+  assert.ok(exerciseUpdates.some((item) => item.exercises.length === 4));
+  assert.ok(exerciseUpdates.some((item) => item.exercises.length === 6));
+  assert.ok(exerciseUpdates.some((item) => item.exerciseProgress?.type === 'short_answer'));
 });
 
 test('exercise network failure preserves the completed plan and does not block later weeks', async (context) => {
@@ -69,7 +76,7 @@ test('exercise network failure preserves the completed plan and does not block l
     for await (const chunk of request) chunks.push(chunk);
     const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     const prompt = body.messages?.at(-1)?.content || '';
-    if (prompt.includes('只返回 JSON 数组')) {
+    if (prompt.includes('exercises 数组')) {
       exerciseRequests += 1;
       request.socket.destroy();
       return;

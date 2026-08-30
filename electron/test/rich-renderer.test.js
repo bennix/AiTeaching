@@ -28,3 +28,10 @@ test('rich text renderer sanitizes before typesetting', () => {
   assert.ok(source.indexOf('DOMPurify.sanitize') < source.indexOf('renderMathInElement'));
   assert.match(source, /FORBID_TAGS/);
 });
+
+test('downloaded courseware is a standalone HTML document', () => {
+  const server = fs.readFileSync(path.join(__dirname, '..', 'server.js'), 'utf8');
+  assert.match(server, /function buildStandaloneCoursewareHtml/);
+  assert.match(server, /data:\$\{mime\};base64/);
+  assert.doesNotMatch(server, /<script src="\/vendor\/marked/);
+});

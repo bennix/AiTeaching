@@ -55,7 +55,11 @@ test('教师和学生通过同一局域网服务完成导入、签到和选择�
   assert.match(teacherPreview.body.markdown, /\$x=1\$/);
   const teacherDownload = await fetch(`${base}/api/materials/${materialId}/download`, { headers: { Cookie: adminCookie } });
   assert.match(teacherDownload.headers.get('content-type'), /text\/html/);
-  assert.match(await teacherDownload.text(), /RichText\.render/);
+  const downloadedCourseware = await teacherDownload.text();
+  assert.match(downloadedCourseware, /RichText\.render/);
+  assert.match(downloadedCourseware, /本周学习变量与公式/);
+  assert.match(downloadedCourseware, /data:font\/woff2;base64,/);
+  assert.doesNotMatch(downloadedCourseware, /(?:src|href)="\//);
 
   const studentLogin = await json(`${base}/api/auth/student`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: 'S001', className: '一班' }) });
   const studentCookie = studentLogin.response.headers.get('set-cookie').split(';')[0];

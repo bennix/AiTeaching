@@ -38,3 +38,10 @@ test('exercise generator reports missing types and keeps its action in a separat
   assert.match(css, /\.exercise-generator-actions\s*\{/);
   assert.match(css, /\.exercise-generator\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
 });
+
+test('question bank rerenders live exercise batches from the lesson event stream', () => {
+  assert.match(source, /\['ai', 'exercises'\]\.includes\(state\.activeTab\)/);
+  assert.match(source, /正在生成\$\{exerciseTypeLabel\(progress\.type\)\}/);
+  assert.match(source, /已完成的题目会立即显示在下方/);
+  assert.match(source, /AI 正在生成第一批题目/);
+});

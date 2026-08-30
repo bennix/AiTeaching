@@ -66,6 +66,34 @@ function buildCoursewareMarkdown(lesson) {
   return `# ${lesson.title || `${lesson.courseName || '课程'} · 第 ${lesson.teachingWeek} 周`}\n\n> ${lesson.courseName || '课程'} · 第 ${lesson.teachingWeek}/${lesson.totalWeeks} 教学周${lesson.date ? ` · ${lesson.date}` : ''}\n\n${lesson.aiResult || lesson.structuredNotes || lesson.rawText || '暂无教学内容'}${exercises ? `\n\n## 课堂练习\n\n${exercises}` : ''}`;
 }
 
+function inlineBrowserScript(filePath) {
+  return fs.readFileSync(filePath, 'utf8').replace(/<\/script/gi, '<\\/script');
+}
+
+function standaloneKatexCss(rendererDir) {
+  const katexDir = path.join(rendererDir, 'vendor', 'katex');
+  return fs.readFileSync(path.join(katexDir, 'katex.min.css'), 'utf8').replace(/url\((?:['"])?fonts\/([^)'"?]+)(?:['"])?\)/g, (source, filename) => {
+    const fontPath = path.join(katexDir, 'fonts', filename);
+    if (!fs.existsSync(fontPath)) return source;
+    const extension = path.extname(filename).slice(1).toLowerCase();
+    const mime = extension === 'woff2' ? 'font/woff2' : (extension === 'woff' ? 'font/woff' : 'font/ttf');
+    return `url(data:${mime};base64,${fs.readFileSync(fontPath).toString('base64')})`;
+  });
+}
+
+function buildStandaloneCoursewareHtml({ rendererDir, title, markdown }) {
+  const embeddedMarkdown = JSON.stringify(markdown).replace(/</g, '\\u003c');
+  const styles = `${standaloneKatexCss(rendererDir)}\n${fs.readFileSync(path.join(rendererDir, 'rich-text.css'), 'utf8')}\nbody{font:17px/1.8 system-ui;max-width:1100px;margin:auto;padding:4vw;color:#172033;background:#f5f7fb}main{background:white;padding:clamp(24px,5vw,64px);border-radius:24px;box-shadow:0 18px 60px #17203312}`.replace(/<\/style/gi, '<\\/style');
+  const scripts = [
+    path.join(rendererDir, 'vendor', 'marked.umd.js'),
+    path.join(rendererDir, 'vendor', 'purify.min.js'),
+    path.join(rendererDir, 'vendor', 'katex', 'katex.min.js'),
+    path.join(rendererDir, 'vendor', 'katex', 'auto-render.min.js'),
+    path.join(rendererDir, 'markdown.js'),
+  ].map((filePath) => `<script>${inlineBrowserScript(filePath)}</script>`).join('');
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; img-src data:"><title>${htmlEscape(title)}</title><style>${styles}</style></head><body><main id="courseware" class="markdown-body"></main>${scripts}<script>RichText.render(document.getElementById('courseware'),${embeddedMarkdown},'暂无课件内容');</script></body></html>`;
+}
+
 function materialPreviewMarkdown(store, material) {
   if (material.markdown) return material.markdown;
   if (material.type !== 'ai_generated') return '';
@@ -280,26 +308,32 @@ async function processLessons(store, lessonIds, { onUpdate } = {}) {
         },
       });
       if (!store.getLesson(id)) continue;
-      store.updateLesson(id, { status: 'processing', processingStage: 'exercises', aiResult, structuredNotes: aiResult, planCompletedAt: new Date().toISOString() });
+      store.updateLesson(id, {
+        status: 'processing', processingStage: 'exercises', aiResult, structuredNotes: aiResult,
+        planCompletedAt: new Date().toISOString(), exerciseProgress: null,
+      });
       notify(store.getLesson(id));
       let exerciseWarning = '';
       if (!store.state.exercises.some((item) => item.lessonId === id && !item.targetStudentId)) {
-        let generated = [];
         try {
-          generated = await generateExercisesForBlueprint(settings, { ...lesson, aiResult }, lesson.exerciseOptions);
+          await generateExercisesForBlueprint(settings, { ...lesson, aiResult }, lesson.exerciseOptions, {
+            onProgress: (fresh, progress) => {
+              if (!store.getLesson(id)) return;
+              const records = exerciseRecords(fresh, id);
+              if (records.length) store.addExercises(records);
+              store.updateLesson(id, { exerciseProgress: progress });
+              notify(store.getLessonDetail(id));
+            },
+          });
         } catch (error) {
-          generated = Array.isArray(error.partialExercises) ? error.partialExercises : [];
           exerciseWarning = error.kind === 'shortage'
             ? `教学方案已完成；题库未完全达到设定数量。${error.message}。可在“题库”中继续补充。`
             : `教学方案已完成；题库生成暂时中断。${error.message}。已保留本周方案，可在“题库”中重试。`;
         }
-        if (!store.getLesson(id)) continue;
-        const records = exerciseRecords(generated, id);
-        if (records.length) store.addExercises(records);
       }
       if (!store.getLesson(id)) continue;
-      store.updateLesson(id, { status: 'done', processingStage: '', aiResult, structuredNotes: aiResult, warning: exerciseWarning });
-      notify(store.getLesson(id));
+      store.updateLesson(id, { status: 'done', processingStage: '', aiResult, structuredNotes: aiResult, warning: exerciseWarning, exerciseProgress: null });
+      notify(store.getLessonDetail(id));
       processed += 1;
     } catch (error) {
       failed += 1;
@@ -336,15 +370,20 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
   const lessonSubscribers = new Map();
   let activePort = preferredPort;
 
-  const lessonStreamPayload = (lesson) => JSON.stringify({
-    id: lesson.id,
-    status: lesson.status,
-    processingStage: lesson.processingStage || '',
-    aiResult: lesson.aiResult || '',
-    error: lesson.error || '',
-    warning: lesson.warning || '',
-    updatedAt: lesson.updatedAt,
-  });
+  const lessonStreamPayload = (lesson) => {
+    const detail = store.getLessonDetail(lesson.id);
+    return JSON.stringify({
+      id: lesson.id,
+      status: lesson.status,
+      processingStage: lesson.processingStage || '',
+      exerciseProgress: lesson.exerciseProgress || null,
+      exercises: detail?.exercises || [],
+      aiResult: lesson.aiResult || '',
+      error: lesson.error || '',
+      warning: lesson.warning || '',
+      updatedAt: lesson.updatedAt,
+    });
+  };
   const broadcastLesson = (lesson) => {
     for (const response of lessonSubscribers.get(lesson.id) || []) {
       try { response.write(`data: ${lessonStreamPayload(lesson)}\n\n`); } catch { /* Closed streams are removed by the request close handler. */ }
@@ -571,22 +610,34 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const normalized = normalizeExerciseBlueprint(blueprint);
         if (!normalized.length) throw new Error('请至少配置 1 道题');
         if (!body.preserveExerciseOptions) store.updateLesson(lesson.id, { exerciseOptions: { mode: 'current', typeConfigs: normalized } });
-        let generated;
+        const previousStatus = lesson.status;
+        const records = [];
         let warning = '';
+        store.updateLesson(lesson.id, { status: 'processing', processingStage: 'exercises', error: '', warning: '', exerciseProgress: null });
+        broadcastLesson(store.getLessonDetail(lesson.id));
         try {
-          generated = await generateExercisesForBlueprint(store.getSettings({ includeKey: true }), lesson, blueprint);
+          await generateExercisesForBlueprint(store.getSettings({ includeKey: true }), lesson, blueprint, {
+            onProgress: (fresh, progress) => {
+              const batch = exerciseRecords(fresh, lesson.id);
+              if (batch.length) { store.addExercises(batch); records.push(...batch); }
+              store.updateLesson(lesson.id, { exerciseProgress: progress });
+              broadcastLesson(store.getLessonDetail(lesson.id));
+            },
+          });
         } catch (error) {
-          if (!lesson.aiResult && !lesson.structuredNotes) throw error;
-          generated = Array.isArray(error.partialExercises) ? error.partialExercises : [];
+          if (!lesson.aiResult && !lesson.structuredNotes) {
+            store.updateLesson(lesson.id, { status: previousStatus, processingStage: '', exerciseProgress: null });
+            broadcastLesson(store.getLessonDetail(lesson.id));
+            throw error;
+          }
           warning = `${error.message}；教学方案和已有题目不受影响，可再次生成补充。`;
         }
-        const records = exerciseRecords(generated, lesson.id);
-        if (records.length) store.addExercises(records);
         if (lesson.aiResult || lesson.structuredNotes) {
           store.updateLesson(lesson.id, {
             status: 'done', processingStage: '', error: '', warning,
-            planCompletedAt: lesson.planCompletedAt || new Date().toISOString(),
+            planCompletedAt: lesson.planCompletedAt || new Date().toISOString(), exerciseProgress: null,
           });
+          broadcastLesson(store.getLessonDetail(lesson.id));
           const downstream = lessonsInSeries(store, lesson)
             .filter((item) => Number(item.teachingWeek) > Number(lesson.teachingWeek) && ['blocked', 'queued'].includes(item.status))
             .map((item) => item.id);
@@ -656,8 +707,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const filename = `第${lesson.teachingWeek}周_${String(lesson.title).replace(/[^\p{L}\p{N}_-]+/gu, '_')}.html`;
         const filePath = path.join(store.uploadDir, `${Date.now()}-${filename}`);
         const markdown = buildCoursewareMarkdown(lesson);
-        const embeddedMarkdown = JSON.stringify(markdown).replace(/</g, '\\u003c');
-        fs.writeFileSync(filePath, `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(lesson.title)}</title><link rel="stylesheet" href="/vendor/katex/katex.min.css"><link rel="stylesheet" href="/rich-text.css"><style>body{font:17px/1.8 system-ui;max-width:1100px;margin:auto;padding:4vw;color:#172033;background:#f5f7fb}main{background:white;padding:clamp(24px,5vw,64px);border-radius:24px;box-shadow:0 18px 60px #17203312}</style></head><body><main id="courseware" class="markdown-body"></main><script src="/vendor/marked.umd.js"></script><script src="/vendor/purify.min.js"></script><script src="/vendor/katex/katex.min.js"></script><script src="/vendor/katex/auto-render.min.js"></script><script src="/markdown.js"></script><script>RichText.render(document.getElementById('courseware'),${embeddedMarkdown},'暂无课件内容');</script></body></html>`, 'utf8');
+        fs.writeFileSync(filePath, buildStandaloneCoursewareHtml({ rendererDir, title: lesson.title, markdown }), 'utf8');
         const previous = store.state.materials.filter((item) => item.lessonId === lesson.id && item.type === 'ai_generated');
         const material = { id: crypto.randomUUID(), lessonId: lesson.id, type: 'ai_generated', filename, filePath, markdown, createdAt: new Date().toISOString() };
         store.state.materials = store.state.materials.filter((item) => !(item.lessonId === lesson.id && item.type === 'ai_generated'));
@@ -835,4 +885,4 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
   };
 }
 
-module.exports = { buildTeachingContext, createLanServer, exerciseBlueprintFromFields, findLessonPrerequisite, getLanUrls, parseCsv, processLessons };
+module.exports = { buildStandaloneCoursewareHtml, buildTeachingContext, createLanServer, exerciseBlueprintFromFields, findLessonPrerequisite, getLanUrls, parseCsv, processLessons };

@@ -7,6 +7,13 @@ function endpoint(baseUrl, suffix) {
   return `${clean}${suffix}`;
 }
 
+function aiContentText(value) {
+  if (typeof value === 'string') return value;
+  if (Array.isArray(value)) return value.map(aiContentText).join('');
+  if (value && typeof value === 'object') return aiContentText(value.text ?? value.content ?? value.output_text ?? '');
+  return String(value ?? '');
+}
+
 function friendlyAiRequestError(error) {
   if (error?.name === 'AbortError') return new Error('AI 服务请求超时，请稍后重试或检查 BaseURL 与网络连接');
   if (/^HTTP \d+:/i.test(String(error?.message || ''))) return error;
@@ -54,7 +61,7 @@ function authHeaders(apiKey) {
 }
 
 function assistantText(payload, streaming = false) {
-  const content = streaming ? payload?.choices?.[0]?.delta?.content : payload?.choices?.[0]?.message?.content;
+  const content = aiContentText(streaming ? payload?.choices?.[0]?.delta?.content : payload?.choices?.[0]?.message?.content);
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) return content.map((item) => typeof item === 'string' ? item : item?.text || '').join('');
   return '';
@@ -124,7 +131,7 @@ async function testConnection(settings) {
       max_tokens: 8,
     }),
   }, 20000);
-  return payload?.choices?.[0]?.message?.content || '连接成功';
+  return aiContentText(payload?.choices?.[0]?.message?.content) || '连接成功';
 }
 
 async function fetchModels(settings) {
@@ -138,15 +145,70 @@ async function fetchModels(settings) {
 
 function cleanAiText(value) {
   const text = String(value || '').trim();
-  return text.replace(/^```(?:markdown|md)?\s*/i, '').replace(/\s*```$/, '').trim();
+  return text.replace(/^```(?:json|markdown|md)?\s*/i, '').replace(/\s*```$/, '').trim();
+}
+
+function repairJsonStringSyntax(source) {
+  let result = '';
+  let inString = false;
+  let escaped = false;
+  for (let index = 0; index < source.length; index += 1) {
+    const character = source[index];
+    if (!inString) {
+      result += character;
+      if (character === '"') inString = true;
+      continue;
+    }
+    if (escaped) {
+      result += character;
+      escaped = false;
+      continue;
+    }
+    if (character === '\\') {
+      result += character;
+      escaped = true;
+      continue;
+    }
+    if (character === '\n') { result += '\\n'; continue; }
+    if (character === '\r') { result += '\\r'; continue; }
+    if (character === '\t') { result += '\\t'; continue; }
+    if (character !== '"') {
+      result += character;
+      continue;
+    }
+    let next = index + 1;
+    while (next < source.length && /\s/.test(source[next])) next += 1;
+    const nextCharacter = source[next];
+    const closesJsonString = next >= source.length || [':', ',', '}', ']'].includes(nextCharacter);
+    if (closesJsonString) {
+      result += character;
+      inString = false;
+    } else {
+      result += '\\"';
+    }
+  }
+  return result;
 }
 
 function parseJsonLoose(value, fallback) {
-  const text = cleanAiText(value);
+  const text = cleanAiText(aiContentText(value));
   const first = Math.min(...['{', '['].map((char) => { const index = text.indexOf(char); return index < 0 ? Infinity : index; }));
   const last = Math.max(text.lastIndexOf('}'), text.lastIndexOf(']'));
-  try { return JSON.parse(Number.isFinite(first) && last >= first ? text.slice(first, last + 1) : text); }
-  catch { return fallback; }
+  const candidate = Number.isFinite(first) && last >= first ? text.slice(first, last + 1) : text;
+  const withoutTrailingCommas = candidate.replace(/,\s*([}\]])/g, '$1');
+  for (const source of [candidate, withoutTrailingCommas, repairJsonStringSyntax(candidate), repairJsonStringSyntax(withoutTrailingCommas)]) {
+    try {
+      const parsed = JSON.parse(source);
+      if (Array.isArray(parsed)) return parsed;
+      if (parsed && typeof parsed === 'object') {
+        for (const key of ['exercises', 'questions', 'items', 'data', '题目', '练习题']) {
+          if (Array.isArray(parsed[key])) return parsed[key];
+        }
+      }
+      return parsed;
+    } catch { /* Try the next conservative repair before using the fallback. */ }
+  }
+  return fallback;
 }
 
 async function generateWeeklyPlan(settings, lesson, { semesterContext = '', previousPlans = '', onDelta } = {}) {
@@ -191,7 +253,7 @@ ${String(lesson.rawText || '').slice(0, 16000)}`;
   };
   if (onDelta) return requestChatStream(endpoint(settings.baseUrl, '/chat/completions'), request, onDelta);
   const payload = await requestJson(endpoint(settings.baseUrl, '/chat/completions'), request);
-  return cleanAiText(payload?.choices?.[0]?.message?.content);
+  return cleanAiText(aiContentText(payload?.choices?.[0]?.message?.content));
 }
 
 const EXERCISE_TYPES = ['choice', 'short_answer', 'application'];
@@ -231,28 +293,66 @@ function normalizeExerciseBlueprint({ typeConfigs } = {}) {
 
 function normalizeGeneratedExerciseType(value) {
   const text = String(value || '').trim().toLowerCase();
-  if (['choice', 'single_choice', 'multiple_choice', '选择题', '单选题', '多选题'].includes(text)) return 'choice';
-  if (['short_answer', 'short-answer', 'shortanswer', '简答题', '问答题'].includes(text)) return 'short_answer';
-  if (['application', 'practice', 'case_study', 'coding', '应用题', '实践题', '案例题', '计算题', '编程题'].includes(text)) return 'application';
+  if (['choice', 'single_choice', 'multiple_choice', '选择题', '单选题', '多选题'].includes(text) || /选择|choice/.test(text)) return 'choice';
+  if (['short_answer', 'short-answer', 'shortanswer', '简答题', '问答题'].includes(text) || /简答|问答|short.?answer/.test(text)) return 'short_answer';
+  if (['application', 'practice', 'case_study', 'coding', '应用题', '实践题', '案例题', '计算题', '编程题'].includes(text) || /应用|实践|案例|计算|application|practice/.test(text)) return 'application';
   return text;
+}
+
+function normalizedExerciseRecord(item, fallbackType) {
+  if (!item || typeof item !== 'object') return null;
+  const type = normalizeGeneratedExerciseType(item.type ?? item.questionType ?? item.题型 ?? item.类型 ?? fallbackType);
+  let question = String(item.question ?? item.prompt ?? item.题目 ?? item.问题 ?? '').trim();
+  const choices = item.options ?? item.choices ?? item.选项;
+  if (choices && !/\n\s*[A-D][.、:：)]/i.test(question)) {
+    const rows = Array.isArray(choices)
+      ? choices.map((value, index) => `${String.fromCharCode(65 + index)}. ${typeof value === 'object' ? (value.text ?? value.content ?? value.value ?? '') : value}`)
+      : Object.entries(choices).map(([key, value]) => `${key}. ${typeof value === 'object' ? (value.text ?? value.content ?? value.value ?? '') : value}`);
+    if (rows.length) question = `${question}\n${rows.join('\n')}`;
+  }
+  const answer = String(item.answer ?? item.correctAnswer ?? item.correct_answer ?? item.参考答案 ?? item.答案 ?? '').trim();
+  return {
+    ...item,
+    type,
+    question,
+    answer,
+    explanation: String(item.explanation ?? item.analysis ?? item.解析 ?? item.说明 ?? ''),
+    difficulty: String(item.difficulty ?? item.难度 ?? ''),
+    knowledgePoint: String(item.knowledgePoint ?? item.knowledge_point ?? item.知识点 ?? ''),
+  };
+}
+
+function parseGeneratedExercises(content, options) {
+  const parsed = parseJsonLoose(content, []);
+  if (!Array.isArray(parsed)) return [];
+  return parsed.map((item) => normalizedExerciseRecord(item, options.types.length === 1 ? options.types[0] : ''))
+    .filter((item) => item && options.types.includes(item.type) && item.question && item.answer).map((item) => ({
+      ...item,
+      type: item.type,
+      difficulty: options.difficulty === 'mixed' && EXERCISE_DIFFICULTIES.includes(item.difficulty) ? item.difficulty : (options.difficulty === 'mixed' ? 'medium' : options.difficulty),
+      question: String(item.question),
+      answer: String(item.answer),
+      explanation: String(item.explanation || ''),
+      knowledgePoint: String(item.knowledgePoint || ''),
+    })).slice(0, options.count);
 }
 
 async function generateExercises(settings, lesson, { targetStudentId = null, weakPoints = '', types, count, difficulty, excludeQuestions = [] } = {}) {
   const options = normalizeExerciseOptions({ types, count, difficulty });
   const typeLabel = { choice: '选择题', short_answer: '简答题', application: '实践/应用题' };
   const difficultyLabel = { easy: '简单', medium: '中等', hard: '困难', mixed: '由易到难的混合难度' };
-  const prompt = `请根据以下教学周内容生成恰好 ${options.count} 道练习题。只返回 JSON 数组，不要代码围栏。
+  const prompt = `请根据以下教学周内容生成恰好 ${options.count} 道练习题。只返回一个严格有效的 JSON 对象，不要代码围栏，对象格式为 {"exercises":[...]}。JSON 字符串内容中不要使用未转义的英文双引号，需要引用术语时请使用中文引号“”。
 允许的题型仅限：${options.types.map((item) => `${item}（${typeLabel[item]}）`).join('、')}。
 难度要求：${difficultyLabel[options.difficulty]}。${options.difficulty === 'mixed' ? '请合理分配 easy、medium、hard。' : `每道题的 difficulty 必须是 ${options.difficulty}。`}
 题目必须忠实适配课程学科。除非课程名称或教学内容明确属于编程、软件开发或计算机调试，否则禁止出现代码、Debug、调试程序等编程场景；application 表示适合当前学科的实践题、计算题、案例题、实验题或综合应用题。
-格式：[{
+exercises 数组中的每一项格式：{
   "type":"choice|short_answer|application",
   "question":"题目；选择题须包含 A-D 四个选项",
   "answer":"参考答案；选择题以正确选项字母开头",
   "explanation":"说明为什么答案正确，并给出关键解题思路",
   "difficulty":"easy|medium|hard",
   "knowledgePoint":"知识点"
-}]
+}
 ${excludeQuestions.length ? `不得重复以下已生成题目：\n${excludeQuestions.map((item) => `- ${item}`).join('\n').slice(0, 6000)}` : ''}
 ${targetStudentId ? `这是给学生 ${targetStudentId} 的个性化练习，重点补强：${weakPoints || '近期薄弱知识点'}。` : ''}
 课程：${lesson.courseName || ''}，第 ${lesson.teachingWeek} 周
@@ -262,26 +362,16 @@ ${String(lesson.aiResult || lesson.rawText || '').slice(0, 12000)}`;
     method: 'POST', headers: authHeaders(settings.apiKey),
     body: JSON.stringify({ model: settings.gradingModel || settings.model, messages: [{ role: 'user', content: prompt }], max_tokens: 4096 }),
   });
-  const parsed = parseJsonLoose(payload?.choices?.[0]?.message?.content, []);
-  if (!Array.isArray(parsed)) return [];
-  return parsed.map((item) => ({ ...item, type: normalizeGeneratedExerciseType(item?.type) }))
-    .filter((item) => item && options.types.includes(item.type) && item.question && item.answer).map((item) => ({
-    ...item,
-    type: item.type,
-    difficulty: options.difficulty === 'mixed' && EXERCISE_DIFFICULTIES.includes(item.difficulty) ? item.difficulty : (options.difficulty === 'mixed' ? 'medium' : options.difficulty),
-    question: String(item.question),
-    answer: String(item.answer),
-    explanation: String(item.explanation || ''),
-    knowledgePoint: String(item.knowledgePoint || ''),
-  })).slice(0, options.count);
+  return parseGeneratedExercises(payload?.choices?.[0]?.message?.content, options);
 }
 
-async function generateExercisesForBlueprint(settings, lesson, blueprint) {
+async function generateExercisesForBlueprint(settings, lesson, blueprint, { onProgress } = {}) {
   const configs = normalizeExerciseBlueprint(blueprint);
   const batches = [];
   for (const item of configs) {
     const collected = [];
     const seen = new Set();
+    onProgress?.([], { type: item.type, expected: item.count, actual: 0, phase: 'generating' });
     for (let attempt = 0; attempt < 3 && collected.length < item.count; attempt += 1) {
       let generated;
       try {
@@ -293,17 +383,21 @@ async function generateExercisesForBlueprint(settings, lesson, blueprint) {
         error.partialExercises = [...batches.flat(), ...collected, ...(Array.isArray(error.partialExercises) ? error.partialExercises : [])];
         throw error;
       }
+      const fresh = [];
       for (const exercise of generated) {
         const key = exercise.question.trim();
-        if (key && !seen.has(key)) { seen.add(key); collected.push(exercise); }
+        if (key && !seen.has(key)) { seen.add(key); collected.push(exercise); fresh.push(exercise); }
       }
+      onProgress?.(fresh, { type: item.type, expected: item.count, actual: collected.length, phase: 'generating' });
     }
     batches.push(collected.slice(0, item.count));
+    onProgress?.([], { type: item.type, expected: item.count, actual: batches.at(-1).length, phase: 'complete' });
   }
   const shortages = configs.map((item, index) => ({ type: item.type, expected: item.count, actual: batches[index].length }))
     .filter((item) => item.actual < item.expected);
   if (shortages.length) {
-    const error = new Error(`部分题型自动补生成后仍数量不足：${shortages.map((item) => `${item.type} 需要 ${item.expected}，实际 ${item.actual}`).join('；')}`);
+    const labels = { choice: '选择题', short_answer: '简答题', application: '实践 / 应用题' };
+    const error = new Error(`部分题型自动补生成后仍数量不足：${shortages.map((item) => `${labels[item.type] || item.type}需要 ${item.expected}，实际 ${item.actual}`).join('；')}`);
     error.kind = 'shortage';
     error.partialExercises = batches.flat();
     throw error;
@@ -343,7 +437,7 @@ ${lockedConclusion}
       method: 'POST', headers: authHeaders(settings.apiKey),
       body: JSON.stringify({ model: settings.gradingModel || settings.model, messages: [{ role: 'user', content: prompt }], max_tokens: 900 }),
     });
-    const result = parseJsonLoose(payload?.choices?.[0]?.message?.content, {});
+    const result = parseJsonLoose(aiContentText(payload?.choices?.[0]?.message?.content), {});
     if (!isChoice && typeof result.correct !== 'boolean') throw new Error('AI 判题返回格式无效');
     const correct = isChoice ? deterministicCorrect : result.correct;
     const reason = String(result.reason || result.feedback || '').trim();
@@ -367,7 +461,7 @@ async function generateStudentReport(settings, student, records) {
     method: 'POST', headers: authHeaders(settings.apiKey),
     body: JSON.stringify({ model: settings.model, messages: [{ role: 'user', content: prompt }], max_tokens: 3000 }),
   });
-  return cleanAiText(payload?.choices?.[0]?.message?.content);
+  return cleanAiText(aiContentText(payload?.choices?.[0]?.message?.content));
 }
 
 module.exports = {
@@ -380,5 +474,7 @@ module.exports = {
   gradeAnswer,
   normalizeExerciseBlueprint,
   normalizeExerciseOptions,
+  parseJsonLoose,
+  parseGeneratedExercises,
   testConnection,
 };

@@ -43,6 +43,7 @@ test('choice grading without API key returns an immediate local explanation', as
 
 test('exercise generation retries shortages and accepts Chinese type aliases', async (context) => {
   let calls = 0;
+  const progressEvents = [];
   const mock = await mockAi(() => {
     calls += 1;
     if (calls === 1) return '[]';
@@ -54,8 +55,13 @@ test('exercise generation retries shortages and accepts Chinese type aliases', a
   context.after(mock.close);
   const result = await generateExercisesForBlueprint({ baseUrl: mock.baseUrl, apiKey: 'test', model: 'mock' }, {
     courseName: '程序设计', teachingWeek: 1, aiResult: '变量与赋值',
-  }, { typeConfigs: [{ type: 'short_answer', count: 2, difficulty: 'medium' }] });
+  }, { typeConfigs: [{ type: 'short_answer', count: 2, difficulty: 'medium' }] }, {
+    onProgress: (fresh, progress) => progressEvents.push({ fresh: fresh.length, ...progress }),
+  });
   assert.equal(calls, 2);
   assert.equal(result.length, 2);
   assert.ok(result.every((item) => item.type === 'short_answer'));
+  assert.deepEqual(progressEvents.map((item) => [item.fresh, item.actual, item.phase]), [
+    [0, 0, 'generating'], [0, 0, 'generating'], [2, 2, 'generating'], [0, 2, 'complete'],
+  ]);
 });

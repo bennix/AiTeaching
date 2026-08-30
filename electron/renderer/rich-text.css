@@ -101,6 +101,26 @@
 .exercise-generator small { color: #7d879a; display: block; margin-top: 4px; }
 .exercise-generator-heading { display: flex; justify-content: space-between; gap: 18px; }
 .exercise-coverage-warning { background: #fff8e8; border: 1px solid #f2d89c; border-radius: 9px; color: #8a5b00; font-size: 13px; padding: 10px 12px; }
+.exercise-live-progress {
+  align-items: center;
+  background: #eeecff;
+  border: 1px solid #d9d4ff;
+  border-radius: 10px;
+  color: #5145d8;
+  display: grid;
+  gap: 3px 9px;
+  grid-template-columns: auto 1fr;
+  padding: 11px 13px;
+}
+.exercise-live-progress small { grid-column: 2; margin: 0; }
+.streaming-dot {
+  animation: stream-pulse 1s ease-in-out infinite;
+  background: #6558e8;
+  border-radius: 50%;
+  grid-row: 1 / span 2;
+  height: 8px;
+  width: 8px;
+}
 .exercise-generator-actions { align-items: center; display: flex; gap: 16px; justify-content: space-between; }
 .exercise-generator-actions small { margin: 0; }
 .exercise-generator-actions .button { flex: 0 0 auto; }

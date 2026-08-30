@@ -163,7 +163,7 @@ function watchLessonStream(id) {
       Object.assign(state.activeLesson, update);
       const listItem = state.data?.lessons?.find((item) => item.id === id);
       if (listItem) Object.assign(listItem, update);
-      if (state.activeTab === 'ai') renderDialogContent();
+      if (['ai', 'exercises'].includes(state.activeTab)) renderDialogContent();
       if (!['queued', 'processing'].includes(update.status)) {
         closeLessonStream();
         refresh().catch((error) => toast(error.message, true));
@@ -250,12 +250,17 @@ function renderDialogContent() {
     const coverage = exerciseCoverage(exercises, configured);
     const formConfigs = coverage.missing.length ? coverage.missingConfigs : configured;
     const coverageText = coverage.rows.map((item) => `${item.label} ${item.actual}/${item.expected}`).join(' · ');
+    const generating = lesson.status === 'processing' && lesson.processingStage === 'exercises';
+    const progress = lesson.exerciseProgress;
+    const progressText = progress
+      ? `正在生成${exerciseTypeLabel(progress.type)}：本批已收到 ${progress.actual}/${progress.expected} 道`
+      : '正在连接 AI 并准备本周题库…';
     content.innerHTML = `<form id="exercise-generator-form" class="exercise-generator">
-      <div class="exercise-generator-heading"><strong>${coverage.missing.length ? '补齐当前章节题库' : '为当前章节继续出题'}</strong><small>${escapeHtml(coverageText)}</small></div>
-      ${coverage.missing.length ? `<div class="exercise-coverage-warning">当前题库还缺：${escapeHtml(coverage.missing.map((item) => `${item.label} ${item.expected - item.actual} 道`).join('、'))}。下方已自动填写缺少数量。</div>` : ''}
+      <div class="exercise-generator-heading"><strong>${generating ? '正在生成本周题库' : (coverage.missing.length ? '补齐当前章节题库' : '为当前章节继续出题')}</strong><small>${escapeHtml(coverageText)}</small></div>
+      ${generating ? `<div class="exercise-live-progress"><span class="streaming-dot"></span><strong>${escapeHtml(progressText)}</strong><small>已完成的题目会立即显示在下方，无需离开或刷新页面。</small></div>` : (coverage.missing.length ? `<div class="exercise-coverage-warning">当前题库还缺：${escapeHtml(coverage.missing.map((item) => `${item.label} ${item.expected - item.actual} 道`).join('、'))}。下方已自动填写缺少数量。</div>` : '')}
       <div class="exercise-config-grid">${exerciseConfigRows('manual_', formConfigs)}</div>
-      <div class="exercise-generator-actions"><small>每种题型可分别设置数量与难度，单次合计不超过 30 道</small><button class="button primary" type="submit">${coverage.missing.length ? '补齐缺少题目' : '确认参数并生成'}</button></div>
-    </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(exerciseTypeLabel(item.type))}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span><span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><span class="exercise-index">${index + 1}</span><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div><div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : '<div class="empty">暂无题目，请在上方选择参数后生成。</div>'}</div>`;
+      <div class="exercise-generator-actions"><small>每种题型可分别设置数量与难度，单次合计不超过 30 道</small><button class="button primary" type="submit" ${generating ? 'disabled' : ''}>${generating ? '题库生成中…' : (coverage.missing.length ? '补齐缺少题目' : '确认参数并生成')}</button></div>
+    </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(exerciseTypeLabel(item.type))}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span><span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><span class="exercise-index">${index + 1}</span><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div><div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : `<div class="empty">${generating ? '<strong>AI 正在生成第一批题目…</strong><br>收到后会自动出现在这里。' : '暂无题目，请在上方选择参数后生成。'}</div>`}</div>`;
     RichText.typeset(content);
     $('#exercise-generator-form').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -264,10 +269,14 @@ function renderDialogContent() {
       button.disabled = true;
       try {
         const typeConfigs = readExerciseBlueprint(form, 'manual_');
-        const result = await api(`/api/lessons/${encodeURIComponent(lesson.id)}/generate-exercises`, {
+        const request = api(`/api/lessons/${encodeURIComponent(lesson.id)}/generate-exercises`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ typeConfigs, preserveExerciseOptions: true }),
         });
+        Object.assign(state.activeLesson, { status: 'processing', processingStage: 'exercises', exerciseProgress: null });
+        renderDialogContent();
+        watchLessonStream(lesson.id);
+        const result = await request;
         toast(result.warning || `已生成 ${result.exercises.length} 道题`, false, Boolean(result.warning));
         state.activeLesson = await api(`/api/lessons/${encodeURIComponent(lesson.id)}`);
         state.activeTab = 'exercises';
