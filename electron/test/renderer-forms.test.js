@@ -20,3 +20,11 @@ test('async teacher forms retain their form reference across await', () => {
     assert.doesNotMatch(afterAwait, /event\.currentTarget/, `${selector} must not read event.currentTarget after awaiting`);
   }
 });
+
+test('teacher settings shows the ZenMux invite only when no API key is configured', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  assert.match(html, /id="api-key-invite"[^>]*hidden/);
+  assert.match(html, /href="https:\/\/zenmux\.ai\/invite\/GBQMC5"/);
+  assert.match(html, /target="_blank" rel="noopener noreferrer"/);
+  assert.match(source, /\$\('#api-key-invite'\)\.hidden = Boolean\(settings\.hasApiKey\);/);
+});

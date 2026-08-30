@@ -62,6 +62,7 @@ function renderSettings() {
   form.gradingModel.value = settings.gradingModel || settings.model || '';
   form.attendanceTimeoutMinutes.value = settings.attendanceTimeoutMinutes || 1440;
   $('#key-status').textContent = settings.hasApiKey ? '已保存加密 API Key；留空不会覆盖' : '尚未保存 API Key';
+  $('#api-key-invite').hidden = Boolean(settings.hasApiKey);
   $('#model-options').innerHTML = (settings.modelOptions || []).map((model) => `<option value="${escapeHtml(model)}"></option>`).join('');
   const mailForm = $('#mail-form');
   for (const [key, value] of Object.entries(settings.mail || {})) if (mailForm.elements[key] && key !== 'password') mailForm.elements[key].value = value || '';

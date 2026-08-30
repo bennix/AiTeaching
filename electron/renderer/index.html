@@ -110,6 +110,7 @@
             <label><span>模型</span><div class="inline"><input name="model" list="model-options" required placeholder="输入或选择模型 ID"><button id="models-button" type="button" class="button secondary">获取模型列表</button></div><datalist id="model-options"></datalist></label>
             <div class="form-grid"><label><span>判题模型</span><input name="gradingModel" list="model-options" placeholder="留空则使用主模型"></label><label><span>签到有效时长（分钟）</span><input name="attendanceTimeoutMinutes" type="number" min="1" value="1440"></label></div>
             <label><span>API Key</span><input name="apiKey" type="password" autocomplete="new-password" placeholder="留空则保留当前 Key"><small id="key-status">尚未保存 API Key</small></label>
+            <div id="api-key-invite" class="notice api-key-invite" hidden><strong>还没有 API Key？</strong><span>可通过 ZenMux 邀请链接注册并获取兼容 API Key。</span><a href="https://zenmux.ai/invite/GBQMC5" target="_blank" rel="noopener noreferrer">打开 ZenMux 邀请链接 ↗</a></div>
             <div class="inline end"><button type="submit" class="button primary">保存设置</button><button id="test-button" type="button" class="button secondary">测试连接</button></div>
           </form>
           <hr class="divider">
