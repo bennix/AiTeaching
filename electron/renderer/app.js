@@ -1,4 +1,4 @@
-const state = { data: null, activeLesson: null, activeTab: 'ai', poller: null };
+const state = { data: null, activeLesson: null, activeTab: 'ai', poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
 const viewMeta = {
   lessons: ['教案与教学周', '管理单周教案与整学期教学安排'],
   import: ['导入教案', '支持 PDF、Word 和 Markdown 教案'],
@@ -11,6 +11,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const richHtml = (value, options) => RichText.html(value, options);
+const exerciseTypeLabel = (type) => ({ choice: '选择题', short_answer: '简答题', application: '实践 / 应用题', coding: '编程题（旧数据）' }[type] || type);
 
 async function api(url, options = {}) {
   const response = await fetch(url, options);
@@ -35,8 +36,18 @@ function showView(name) {
   $('#page-subtitle').textContent = viewMeta[name][1];
 }
 
-function statusLabel(status) {
-  return { done: '✓ AI 已整理', processing: '● AI 处理中', error: '! 处理失败', ready: '待 AI 整理' }[status] || status;
+function statusLabel(status, stage) {
+  if (status === 'processing') return stage === 'exercises' ? '● 正在生成题库' : '● 正在流式整理';
+  return { done: '✓ 方案与题库已完成', queued: '◷ 排队中', blocked: '! 等待前序周', error: '! 处理失败', ready: '等待 API Key' }[status] || status;
+}
+
+function updateBatchToolbar() {
+  $('#batch-toolbar').hidden = !state.batchMode;
+  $('#batch-mode-button').textContent = state.batchMode ? '退出批量管理' : '批量管理';
+  $('#selected-lesson-count').textContent = state.selectedLessonIds.size;
+  $('#batch-delete-button').disabled = !state.selectedLessonIds.size;
+  const lessonIds = (state.data?.lessons || []).map((item) => item.id);
+  $('#select-all-lessons').checked = Boolean(lessonIds.length) && lessonIds.every((id) => state.selectedLessonIds.has(id));
 }
 
 function renderLessons() {
@@ -45,13 +56,27 @@ function renderLessons() {
   $('#metric-done').textContent = lessons.filter((item) => item.status === 'done').length;
   $('#metric-processing').textContent = lessons.filter((item) => item.status === 'processing').length;
   $('#lesson-list').innerHTML = lessons.length ? lessons.map((lesson) => `
-    <article class="lesson-row" data-lesson-id="${escapeHtml(lesson.id)}">
+    <article class="lesson-row${state.batchMode ? ' batch-mode' : ''}" data-lesson-id="${escapeHtml(lesson.id)}">
+      ${state.batchMode ? `<label class="lesson-select"><input type="checkbox" data-select-lesson="${escapeHtml(lesson.id)}" ${state.selectedLessonIds.has(lesson.id) ? 'checked' : ''} aria-label="选择第 ${escapeHtml(lesson.teachingWeek)} 周"></label>` : ''}
       <div class="week-badge">第 ${escapeHtml(lesson.teachingWeek)} 周</div>
       <div><h3>${escapeHtml(lesson.title)}</h3><p>${escapeHtml(lesson.courseName || '未填写课程')}${lesson.className ? ` · ${escapeHtml(lesson.className)}` : ''} · ${escapeHtml(lesson.sourceFilename)}</p></div>
-      <span class="status ${escapeHtml(lesson.status)}">${escapeHtml(statusLabel(lesson.status))}</span>
+      <span class="status ${escapeHtml(lesson.status)}">${escapeHtml(statusLabel(lesson.status, lesson.processingStage))}</span>
       <span class="date">${escapeHtml(lesson.date || '')}</span>
     </article>`).join('') : '<div class="empty">还没有教案。请先导入一个教学周或整学期教案。</div>';
-  $$('.lesson-row').forEach((row) => row.addEventListener('click', () => openLesson(row.dataset.lessonId)));
+  $$('.lesson-row').forEach((row) => row.addEventListener('click', (event) => {
+    if (state.batchMode) {
+      if (!event.target.matches('[data-select-lesson]')) row.querySelector('[data-select-lesson]').click();
+      return;
+    }
+    openLesson(row.dataset.lessonId);
+  }));
+  $$('[data-select-lesson]').forEach((checkbox) => checkbox.addEventListener('click', (event) => event.stopPropagation()));
+  $$('[data-select-lesson]').forEach((checkbox) => checkbox.addEventListener('change', () => {
+    if (checkbox.checked) state.selectedLessonIds.add(checkbox.dataset.selectLesson);
+    else state.selectedLessonIds.delete(checkbox.dataset.selectLesson);
+    updateBatchToolbar();
+  }));
+  updateBatchToolbar();
 }
 
 function renderSettings() {
@@ -115,12 +140,38 @@ async function refresh() {
   renderSettings();
   renderStudents();
   renderNetwork();
-  const hasProcessing = state.data.lessons.some((item) => item.status === 'processing');
+  const hasProcessing = state.data.lessons.some((item) => ['queued', 'processing'].includes(item.status));
   clearTimeout(state.poller);
   if (hasProcessing) state.poller = setTimeout(refresh, 2500);
 }
 
+function closeLessonStream() {
+  if (state.lessonStream) state.lessonStream.close();
+  state.lessonStream = null;
+}
+
+function watchLessonStream(id) {
+  closeLessonStream();
+  const stream = new EventSource(`/api/lessons/${encodeURIComponent(id)}/stream`);
+  state.lessonStream = stream;
+  stream.onmessage = (event) => {
+    if (!state.activeLesson || state.activeLesson.id !== id) return;
+    try {
+      const update = JSON.parse(event.data);
+      Object.assign(state.activeLesson, update);
+      const listItem = state.data?.lessons?.find((item) => item.id === id);
+      if (listItem) Object.assign(listItem, update);
+      if (state.activeTab === 'ai') renderDialogContent();
+      if (!['queued', 'processing'].includes(update.status)) {
+        closeLessonStream();
+        refresh().catch((error) => toast(error.message, true));
+      }
+    } catch { /* Ignore malformed stream events and keep the connection alive. */ }
+  };
+}
+
 async function openLesson(id) {
+  closeLessonStream();
   state.activeLesson = await api(`/api/lessons/${encodeURIComponent(id)}`);
   state.activeTab = 'ai';
   $('#dialog-week').textContent = `第 ${state.activeLesson.teachingWeek}/${state.activeLesson.totalWeeks} 周`;
@@ -131,6 +182,36 @@ async function openLesson(id) {
   $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === 'ai'));
   renderDialogContent();
   if (!$('#lesson-dialog').open) $('#lesson-dialog').showModal();
+  if (['queued', 'processing'].includes(state.activeLesson.status)) watchLessonStream(id);
+}
+
+const exerciseTypes = [
+  { value: 'choice', label: '选择题', defaultCount: 4, defaultDifficulty: 'medium' },
+  { value: 'short_answer', label: '简答题', defaultCount: 2, defaultDifficulty: 'medium' },
+  { value: 'application', label: '实践 / 应用题', defaultCount: 0, defaultDifficulty: 'hard' },
+];
+const difficultyOptions = [
+  { value: 'mixed', label: '混合难度' }, { value: 'easy', label: '简单' },
+  { value: 'medium', label: '中等' }, { value: 'hard', label: '困难' },
+];
+
+function exerciseConfigRows(prefix, configured = []) {
+  const byType = new Map((configured || []).map((item) => [item.type === 'coding' ? 'application' : item.type, item]));
+  return exerciseTypes.map((type) => {
+    const current = byType.get(type.value) || { count: type.defaultCount, difficulty: type.defaultDifficulty };
+    return `<div class="exercise-config-row"><strong>${type.label}</strong><label><span>数量</span><input type="number" name="${prefix}${type.value}_count" min="0" max="30" value="${Number(current.count) || 0}" required></label><label><span>难度</span><select name="${prefix}${type.value}_difficulty">${difficultyOptions.map((item) => `<option value="${item.value}" ${item.value === current.difficulty ? 'selected' : ''}>${item.label}</option>`).join('')}</select></label></div>`;
+  }).join('');
+}
+
+function readExerciseBlueprint(form, prefix) {
+  const typeConfigs = exerciseTypes.map((type) => ({
+    type: type.value,
+    count: Number(form.get(`${prefix}${type.value}_count`)) || 0,
+    difficulty: form.get(`${prefix}${type.value}_difficulty`) || 'mixed',
+  }));
+  const total = typeConfigs.reduce((sum, item) => sum + item.count, 0);
+  if (total < 1 || total > 30) throw new Error('每个章节的题目总数必须在 1–30 道之间');
+  return typeConfigs;
 }
 
 function renderDialogContent() {
@@ -140,25 +221,23 @@ function renderDialogContent() {
   if (state.activeTab === 'source') RichText.render(content, lesson.rawText, '没有原文');
   else if (state.activeTab === 'exercises') {
     const exercises = lesson.exercises || [];
+    const configured = lesson.exerciseOptions?.typeConfigs || [];
     content.innerHTML = `<form id="exercise-generator-form" class="exercise-generator">
-      <div><strong>AI 出题</strong><small>按本周教学内容生成，可组合多种题型</small></div>
-      <fieldset><legend>题型</legend><label><input type="checkbox" name="types" value="choice" checked> 选择题</label><label><input type="checkbox" name="types" value="short_answer" checked> 简答题</label><label><input type="checkbox" name="types" value="coding"> 编程题</label></fieldset>
-      <label><span>数量</span><input type="number" name="count" min="1" max="30" value="6" required></label>
-      <label><span>难度</span><select name="difficulty"><option value="mixed">混合难度</option><option value="easy">简单</option><option value="medium">中等</option><option value="hard">困难</option></select></label>
-      <button class="button primary" type="submit">按参数生成</button>
-    </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(item.type)}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span><span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><strong>${index + 1}.</strong><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div><div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : '<div class="empty">暂无题目，请在上方选择参数后生成。</div>'}</div>`;
+      <div><strong>为当前章节继续出题</strong><small>每种题型分别设置数量与难度，合计不超过 30 道</small></div>
+      <div class="exercise-config-grid">${exerciseConfigRows('manual_', configured)}</div>
+      <button class="button primary" type="submit">确认参数并生成</button>
+    </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(exerciseTypeLabel(item.type))}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span><span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><strong>${index + 1}.</strong><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div><div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : '<div class="empty">暂无题目，请在上方选择参数后生成。</div>'}</div>`;
     RichText.typeset(content);
     $('#exercise-generator-form').addEventListener('submit', async (event) => {
       event.preventDefault();
       const button = event.currentTarget.querySelector('button[type="submit"]');
       const form = new FormData(event.currentTarget);
-      const types = form.getAll('types');
-      if (!types.length) return toast('请至少选择一种题型', true);
       button.disabled = true;
       try {
+        const typeConfigs = readExerciseBlueprint(form, 'manual_');
         const result = await api(`/api/lessons/${encodeURIComponent(lesson.id)}/generate-exercises`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ types, count: Number(form.get('count')), difficulty: form.get('difficulty') }),
+          body: JSON.stringify({ typeConfigs }),
         });
         toast(`已生成 ${result.exercises.length} 道题`);
         state.activeLesson = await api(`/api/lessons/${encodeURIComponent(lesson.id)}`);
@@ -180,7 +259,16 @@ function renderDialogContent() {
     content.innerHTML = `<div class="exercise-list"><form id="lesson-material-form" class="inline"><input type="file" name="materialFile" required><button class="button primary">上传本周资料</button></form>${materials.length ? materials.map((item) => `<div class="student-card"><div><h3>${escapeHtml(item.filename)}</h3><p>${escapeHtml(item.type || '资料')}</p></div><button class="button danger" data-delete-material="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<div class="empty">暂无课件资料。</div>'}</div>`;
     $('#lesson-material-form').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); form.set('lessonId', lesson.id); try { await api('/api/materials', { method: 'POST', body: form }); toast('资料已上传'); await openLesson(lesson.id); } catch (error) { toast(error.message, true); } });
     $$('[data-delete-material]').forEach((button) => button.addEventListener('click', async () => { try { await api(`/api/materials/${button.dataset.deleteMaterial}`, { method: 'DELETE' }); await openLesson(lesson.id); } catch (error) { toast(error.message, true); } }));
-  } else if (lesson.status === 'processing') RichText.render(content, 'AI 正在整理本教学周方案，请稍候…');
+  } else if (lesson.status === 'queued') {
+    content.innerHTML = '<div class="empty"><strong>本教学周已进入队列</strong><br><span class="muted">程序会先完成所有前序教学周的方案与题库，然后自动处理本周。刷新或重启程序不会丢失队列。</span></div>';
+  } else if (lesson.status === 'processing') {
+    RichText.render(content, lesson.aiResult, lesson.processingStage === 'exercises' ? '教学周方案已完成，正在生成题库…' : 'AI 正在流式整理本教学周方案，请稍候…');
+    const indicator = document.createElement('div');
+    indicator.className = 'streaming-indicator';
+    indicator.textContent = lesson.processingStage === 'exercises' ? '正在生成本周题库…' : '正在接收 AI 内容…';
+    content.append(indicator);
+    content.scrollTop = content.scrollHeight;
+  }
   else RichText.render(content, lesson.aiResult, '尚未生成 AI 教学周方案。可点击“AI 重新整理”。');
 }
 
@@ -188,14 +276,61 @@ $$('.nav-item').forEach((item) => item.addEventListener('click', () => showView(
 $$('[data-go]').forEach((item) => item.addEventListener('click', () => showView(item.dataset.go)));
 $('#refresh-button').addEventListener('click', () => refresh().catch((error) => toast(error.message, true)));
 
+function renderImportExerciseSettings() {
+  const semester = document.querySelector('input[name="scope"]:checked')?.value === 'semester';
+  const mode = semester ? $('#exercise-mode').value : 'uniform';
+  $('#exercise-mode').value = mode;
+  $('#exercise-mode-field').hidden = !semester;
+  if (!$('#uniform-exercise-settings').innerHTML) $('#uniform-exercise-settings').innerHTML = exerciseConfigRows('exercise_');
+  $('#uniform-exercise-settings').hidden = mode === 'per_week';
+  $('#per-week-exercise-settings').hidden = mode !== 'per_week';
+  if (mode === 'per_week') {
+    const totalWeeks = Math.min(40, Math.max(1, Number(document.querySelector('[name="totalWeeks"]').value) || 16));
+    $('#per-week-exercise-settings').innerHTML = Array.from({ length: totalWeeks }, (_, index) => `<details class="week-exercise-card" ${index === 0 ? 'open' : ''}><summary>第 ${index + 1} 章节 / 教学周</summary><div class="exercise-config-grid">${exerciseConfigRows(`week_${index + 1}_`)}</div></details>`).join('');
+  }
+}
+
+$('#batch-mode-button').addEventListener('click', () => {
+  state.batchMode = !state.batchMode;
+  state.selectedLessonIds.clear();
+  renderLessons();
+});
+$('#batch-cancel-button').addEventListener('click', () => {
+  state.batchMode = false;
+  state.selectedLessonIds.clear();
+  renderLessons();
+});
+$('#select-all-lessons').addEventListener('change', (event) => {
+  state.selectedLessonIds = new Set(event.target.checked ? (state.data?.lessons || []).map((item) => item.id) : []);
+  renderLessons();
+});
+$('#batch-delete-button').addEventListener('click', async () => {
+  const ids = [...state.selectedLessonIds];
+  if (!ids.length || !confirm(`确认永久删除所选的 ${ids.length} 个教案及其关联题库、作答、签到和课件资料？此操作无法撤销。`)) return;
+  const button = $('#batch-delete-button');
+  button.disabled = true;
+  try {
+    const result = await api('/api/lessons/batch-delete', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ids }) });
+    state.batchMode = false;
+    state.selectedLessonIds.clear();
+    toast(`已删除 ${result.deleted} 个教案`);
+    await refresh();
+  } catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+});
+
 $$('input[name="scope"]').forEach((radio) => radio.addEventListener('change', () => {
   const semester = radio.value === 'semester' && radio.checked;
   $$('.scope-card').forEach((card) => card.classList.toggle('selected', card.querySelector('input').checked));
   $('#week-number-field').hidden = semester;
   $('#total-weeks-field').hidden = !semester;
   $('#date-label').textContent = semester ? '第一教学周日期' : '上课日期';
-  $('#scope-help').textContent = semester ? '优先识别“第 N 周”标题；若原文没有周标题，将按内容量拆分为指定周数。' : '文件将保存为一个教学周；若已配置 API Key，会自动生成教学周方案。';
+  $('#scope-help').textContent = semester ? '一次导入即可：程序会自动拆分全部教学周，按周顺序生成方案和题库；未轮到的周会稳定显示为“排队中”。' : '文件将保存为一个教学周；若已配置 API Key，会自动生成教学周方案及题库。';
+  renderImportExerciseSettings();
 }));
+
+$('#exercise-mode').addEventListener('change', renderImportExerciseSettings);
+document.querySelector('[name="totalWeeks"]').addEventListener('change', renderImportExerciseSettings);
 
 $('#lesson-file').addEventListener('change', (event) => {
   $('#file-label').textContent = event.target.files[0]?.name || '选择教案文件';
@@ -208,9 +343,14 @@ $('#import-form').addEventListener('submit', async (event) => {
   button.textContent = '正在读取教案…';
   try {
     const form = new FormData(event.currentTarget);
+    const mode = form.get('scope') === 'semester' ? form.get('exerciseMode') : 'uniform';
+    if (mode === 'per_week') {
+      const totalWeeks = Number(form.get('totalWeeks')) || 1;
+      for (let week = 1; week <= totalWeeks; week += 1) readExerciseBlueprint(form, `week_${week}_`);
+    } else readExerciseBlueprint(form, 'exercise_');
     form.set('lessonFile', $('#lesson-file').files[0]);
     const result = await api('/api/import', { method: 'POST', body: form });
-    toast(`已导入 ${result.count} 个教学周${result.processing ? '，AI 正在依次处理' : ''}`);
+    toast(`已导入 ${result.count} 个教学周${result.processing ? '，已进入顺序处理队列' : '；配置 API Key 后会自动整理并生成题库'}`);
     await refresh();
     showView('lessons');
   } catch (error) {
@@ -288,7 +428,7 @@ $('#models-button').addEventListener('click', async (event) => {
   finally { event.target.disabled = false; }
 });
 
-$('#dialog-close').addEventListener('click', () => $('#lesson-dialog').close());
+$('#dialog-close').addEventListener('click', () => { closeLessonStream(); $('#lesson-dialog').close(); });
 $('#report-close').addEventListener('click', () => $('#report-dialog').close());
 $$('.tab').forEach((tab) => tab.addEventListener('click', () => {
   state.activeTab = tab.dataset.tab;
@@ -300,8 +440,10 @@ $('#process-button').addEventListener('click', async () => {
   if (!state.activeLesson) return;
   try {
     await api(`/api/lessons/${encodeURIComponent(state.activeLesson.id)}/process`, { method: 'POST' });
-    toast('已加入 AI 处理队列');
-    $('#lesson-dialog').close();
+    toast('已加入按周顺序处理队列');
+    state.activeLesson = await api(`/api/lessons/${encodeURIComponent(state.activeLesson.id)}`);
+    renderDialogContent();
+    watchLessonStream(state.activeLesson.id);
     await refresh();
   } catch (error) { toast(error.message, true); }
 });
@@ -315,6 +457,7 @@ $('#delete-button').addEventListener('click', async () => {
   if (!state.activeLesson || !confirm(`确认删除“${state.activeLesson.title}”？`)) return;
   try {
     await api(`/api/lessons/${encodeURIComponent(state.activeLesson.id)}`, { method: 'DELETE' });
+    closeLessonStream();
     $('#lesson-dialog').close();
     toast('教案已删除');
     await refresh();
@@ -331,6 +474,7 @@ $('#login-form').addEventListener('submit', async (event) => {
 });
 
 document.querySelector('input[name="startDate"]').value = new Date().toISOString().slice(0, 10);
+renderImportExerciseSettings();
 (async function boot() {
   const auth = await api('/api/auth/status');
   if (auth.role === 'admin') await refresh(); else $('#admin-login').showModal();

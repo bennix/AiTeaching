@@ -111,6 +111,7 @@ function buildLessonRecords({
     className: String(className || '').trim(),
     sourceFilename: filename,
     sourceScope: scope,
+    semesterContext: scope === 'semester' ? cleanText.slice(0, 24000) : '',
     createdAt: now,
     updatedAt: now,
     aiResult: '',

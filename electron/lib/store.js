@@ -1,6 +1,7 @@
 const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
+const { normalizeUploadFilename, repairUtf8Mojibake } = require('./filenames');
 
 const DEFAULT_STATE = {
   settings: {
@@ -43,6 +44,7 @@ class JsonStore {
     fs.mkdirSync(this.uploadDir, { recursive: true });
     this.encryptionKey = this.#loadOrCreateKey();
     this.state = this.#load();
+    if (this.#repairStoredFilenames()) this.save();
   }
 
   #loadOrCreateKey() {
@@ -71,6 +73,21 @@ class JsonStore {
     } catch {
       return clone(DEFAULT_STATE);
     }
+  }
+
+  #repairStoredFilenames() {
+    let changed = false;
+    for (const lesson of this.state.lessons) {
+      const sourceFilename = normalizeUploadFilename(lesson.sourceFilename);
+      const title = repairUtf8Mojibake(lesson.title).normalize('NFC');
+      if (sourceFilename !== lesson.sourceFilename) { lesson.sourceFilename = sourceFilename; changed = true; }
+      if (title !== lesson.title) { lesson.title = title; changed = true; }
+    }
+    for (const material of [...this.state.materials, ...this.state.classMaterials]) {
+      const filename = normalizeUploadFilename(material.filename);
+      if (filename !== material.filename) { material.filename = filename; changed = true; }
+    }
+    return changed;
   }
 
   save() {
@@ -185,7 +202,7 @@ class JsonStore {
 
   listLessons() {
     return this.state.lessons
-      .map(({ rawText, ...item }) => ({ ...item, sourceLength: String(rawText || '').length }))
+      .map(({ rawText, sourceStoredName, ...item }) => ({ ...item, sourceLength: String(rawText || '').length }))
       .sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.createdAt.localeCompare(a.createdAt));
   }
 
@@ -200,7 +217,8 @@ class JsonStore {
     const submissions = this.state.submissions.filter((item) => exercises.some((exercise) => exercise.id === item.exerciseId));
     const attendance = this.state.attendance.filter((item) => item.lessonId === id);
     const materials = this.state.materials.filter((item) => item.lessonId === id);
-    return { ...lesson, exercises, submissions, attendance, materials };
+    const { sourceStoredName, ...visibleLesson } = lesson;
+    return { ...visibleLesson, exercises, submissions, attendance, materials };
   }
 
   addLessons(lessons) {
@@ -217,17 +235,33 @@ class JsonStore {
   }
 
   deleteLesson(id) {
-    const before = this.state.lessons.length;
-    this.state.lessons = this.state.lessons.filter((item) => item.id !== id);
-    if (this.state.lessons.length !== before) {
-      const exerciseIds = this.state.exercises.filter((item) => item.lessonId === id).map((item) => item.id);
-      this.state.exercises = this.state.exercises.filter((item) => item.lessonId !== id);
-      this.state.submissions = this.state.submissions.filter((item) => !exerciseIds.includes(item.exerciseId));
-      this.state.attendance = this.state.attendance.filter((item) => item.lessonId !== id);
-      this.state.materials = this.state.materials.filter((item) => item.lessonId !== id);
-      this.save();
+    return this.deleteLessons([id]) === 1;
+  }
+
+  deleteLessons(ids) {
+    const requested = new Set((Array.isArray(ids) ? ids : []).map(String));
+    const existingIds = new Set(this.state.lessons.filter((item) => requested.has(item.id)).map((item) => item.id));
+    if (!existingIds.size) return 0;
+    const relatedMaterials = this.state.materials.filter((item) => existingIds.has(item.lessonId));
+    const relatedSourceNames = new Set(this.state.lessons.filter((item) => existingIds.has(item.id)).map((item) => item.sourceStoredName).filter(Boolean));
+    const exerciseIds = new Set(this.state.exercises.filter((item) => existingIds.has(item.lessonId)).map((item) => item.id));
+    this.state.lessons = this.state.lessons.filter((item) => !existingIds.has(item.id));
+    this.state.exercises = this.state.exercises.filter((item) => !existingIds.has(item.lessonId));
+    this.state.submissions = this.state.submissions.filter((item) => !exerciseIds.has(item.exerciseId));
+    this.state.attendance = this.state.attendance.filter((item) => !existingIds.has(item.lessonId));
+    this.state.materials = this.state.materials.filter((item) => !existingIds.has(item.lessonId));
+    for (const material of relatedMaterials) {
+      try { if (material.filePath && fs.existsSync(material.filePath)) fs.unlinkSync(material.filePath); } catch { /* Keep data deletion reliable even if an attachment was moved externally. */ }
     }
-    return this.state.lessons.length !== before;
+    for (const sourceStoredName of relatedSourceNames) {
+      if (this.state.lessons.some((item) => item.sourceStoredName === sourceStoredName)) continue;
+      try {
+        const sourcePath = path.join(this.uploadDir, path.basename(sourceStoredName));
+        if (fs.existsSync(sourcePath)) fs.unlinkSync(sourcePath);
+      } catch { /* A missing source copy must not prevent deleting its database records. */ }
+    }
+    this.save();
+    return existingIds.size;
   }
 
   upsertStudent(student) {

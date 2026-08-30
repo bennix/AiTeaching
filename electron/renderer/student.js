@@ -3,6 +3,7 @@ const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const richHtml = (value, options) => RichText.html(value, options);
+const exerciseTypeLabel = (type) => ({ choice: '选择题', short_answer: '简答题', application: '实践 / 应用题', coding: '编程题' }[type] || type);
 async function api(url, options = {}) { const response = await fetch(url, options); const body = await response.json().catch(() => ({})); if (!response.ok) throw new Error(body.error || '请求失败'); return body; }
 function toast(message, error = false) { const node = $('#student-toast'); node.textContent = message; node.classList.toggle('error', error); node.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => { node.hidden = true; }, 3200); }
 
@@ -28,7 +29,7 @@ function render() {
     const submission = submissions.get(item.id);
     const choices = item.type === 'choice' ? String(item.question).split('\n').filter((line) => /^[A-D][.、]/.test(line.trim())) : [];
     const stem = choices.length ? String(item.question).split('\n').filter((line) => !/^[A-D][.、]/.test(line.trim())).join('\n') : item.question;
-    return `<form class="student-exercise" data-exercise-form="${esc(item.id)}"><span class="badge">${index + 1} · ${esc(item.knowledgePoint || item.type)}</span><div class="markdown-body">${richHtml(stem)}</div>${submission ? `<div class="feedback ${submission.correct ? 'correct' : 'wrong'}"><strong>${submission.correct ? '✓ 回答正确' : '✕ 需要再想一想'}</strong><div class="markdown-body">${richHtml(submission.feedback)}</div></div>` : choices.length ? `<div class="choice-options">${choices.map((choice) => `<label><input type="radio" name="answer" value="${esc(choice.trim()[0])}" required><span class="markdown-body">${richHtml(choice, { inline: true })}</span></label>`).join('')}</div><button class="button primary" type="submit">提交答案</button>` : `<textarea name="answer" required placeholder="支持 Markdown 与 LaTeX，例如：$E=mc^2$"></textarea><button class="button primary" type="submit">提交答案</button>`}</form>`;
+    return `<form class="student-exercise" data-exercise-form="${esc(item.id)}"><span class="badge">${index + 1} · ${esc(item.knowledgePoint || exerciseTypeLabel(item.type))}</span><div class="markdown-body">${richHtml(stem)}</div>${submission ? `<div class="feedback ${submission.correct ? 'correct' : 'wrong'}"><strong>${submission.correct ? '✓ 回答正确' : '✕ 需要再想一想'}</strong><div class="markdown-body">${richHtml(submission.feedback)}</div></div>` : choices.length ? `<div class="choice-options">${choices.map((choice) => `<label><input type="radio" name="answer" value="${esc(choice.trim()[0])}" required><span class="markdown-body">${richHtml(choice, { inline: true })}</span></label>`).join('')}</div><button class="button primary" type="submit">提交答案</button>` : `<textarea name="answer" required placeholder="支持 Markdown 与 LaTeX，例如：$E=mc^2$"></textarea><button class="button primary" type="submit">提交答案</button>`}</form>`;
   }).join('') : '<div class="empty">老师尚未发放本周练习。</div>';
   RichText.typeset($('#student-exercises'));
   $$('[data-exercise-form]').forEach((form) => form.addEventListener('submit', submitAnswer));

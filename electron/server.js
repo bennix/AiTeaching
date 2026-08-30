@@ -8,7 +8,17 @@ const nodemailer = require('nodemailer');
 const readXlsxFile = require('read-excel-file/node');
 const { JsonStore } = require('./lib/store');
 const { buildLessonRecords, extractDocumentText } = require('./lib/documents');
-const { fetchModels, generateExercises, generateStudentReport, generateWeeklyPlan, gradeAnswer, testConnection } = require('./lib/ai');
+const { normalizeUploadFilename } = require('./lib/filenames');
+const {
+  fetchModels,
+  generateExercises,
+  generateExercisesForBlueprint,
+  generateStudentReport,
+  generateWeeklyPlan,
+  gradeAnswer,
+  normalizeExerciseBlueprint,
+  testConnection,
+} = require('./lib/ai');
 
 const CONTENT_TYPES = {
   '.css': 'text/css; charset=utf-8',
@@ -105,7 +115,11 @@ function readMultipart(request) {
     const fields = {};
     let uploadedFile = null;
     let failed = false;
-    const busboy = Busboy({ headers: request.headers, limits: { fileSize: 30 * 1024 * 1024, files: 1 } });
+    const busboy = Busboy({
+      headers: request.headers,
+      defParamCharset: 'utf8',
+      limits: { fileSize: 30 * 1024 * 1024, files: 1 },
+    });
     busboy.on('field', (name, value) => { fields[name] = value; });
     busboy.on('file', (_name, stream, info) => {
       const chunks = [];
@@ -115,7 +129,7 @@ function readMultipart(request) {
         reject(new Error('文件不能超过 30 MB'));
       });
       stream.on('end', () => {
-        if (!failed) uploadedFile = { filename: path.basename(info.filename), buffer: Buffer.concat(chunks) };
+        if (!failed) uploadedFile = { filename: normalizeUploadFilename(info.filename), buffer: Buffer.concat(chunks) };
       });
     });
     busboy.on('finish', () => {
@@ -136,30 +150,137 @@ function getLanUrls(port) {
   return [...new Set(urls)];
 }
 
-async function processLessons(store, lessonIds) {
+const activeLessonIds = new WeakMap();
+const EXERCISE_TYPES = ['choice', 'short_answer', 'application'];
+
+function exerciseBlueprintFromFields(fields, teachingWeek) {
+  const mode = fields.exerciseMode === 'per_week' ? 'per_week' : 'uniform';
+  const hasConfiguration = EXERCISE_TYPES.some((type) => Object.hasOwn(fields, `exercise_${type}_count`))
+    || EXERCISE_TYPES.some((type) => Object.hasOwn(fields, `week_${teachingWeek}_${type}_count`));
+  if (!hasConfiguration) return undefined;
+  const prefix = mode === 'per_week' ? `week_${teachingWeek}_` : 'exercise_';
+  const typeConfigs = EXERCISE_TYPES.map((type) => ({
+    type,
+    count: Number.parseInt(fields[`${prefix}${type}_count`], 10) || 0,
+    difficulty: fields[`${prefix}${type}_difficulty`] || 'mixed',
+  }));
+  const requestedTotal = typeConfigs.reduce((sum, item) => sum + Math.max(0, item.count), 0);
+  if (requestedTotal > 30) throw new Error(`第 ${teachingWeek} 周题目总数不能超过 30 道`);
+  const normalized = normalizeExerciseBlueprint({ typeConfigs });
+  if (!normalized.length) throw new Error(`第 ${teachingWeek} 周至少需要配置 1 道题`);
+  return { mode, typeConfigs: normalized };
+}
+
+function lessonSeriesKey(lesson) {
+  if (lesson.sourceScope === 'semester' && lesson.batchId) return `semester:${lesson.batchId}`;
+  return `course:${lesson.courseName || ''}\u0000${lesson.className || ''}`;
+}
+
+function lessonsInSeries(store, lesson) {
+  const key = lessonSeriesKey(lesson);
+  return store.state.lessons.filter((item) => lessonSeriesKey(item) === key);
+}
+
+function findLessonPrerequisite(store, lesson) {
+  if (!lesson || Number(lesson.teachingWeek) <= 1) return null;
+  const latestByWeek = new Map();
+  const candidates = lessonsInSeries(store, lesson)
+    .filter((item) => item.id !== lesson.id && Number(item.teachingWeek) < Number(lesson.teachingWeek))
+    .sort((a, b) => String(b.updatedAt || b.createdAt || '').localeCompare(String(a.updatedAt || a.createdAt || '')));
+  for (const item of candidates) if (!latestByWeek.has(Number(item.teachingWeek))) latestByWeek.set(Number(item.teachingWeek), item);
+  for (let week = 1; week < Number(lesson.teachingWeek); week += 1) {
+    const previous = latestByWeek.get(week);
+    if (!previous) return { week, status: 'missing', message: `请先导入并整理第 ${week} 周教案，再处理第 ${lesson.teachingWeek} 周。` };
+    if (previous.status !== 'done') return { week, status: previous.status, lessonId: previous.id, message: `请先完成第 ${week} 周教案整理，再处理第 ${lesson.teachingWeek} 周。` };
+  }
+  return null;
+}
+
+function buildTeachingContext(store, lesson) {
+  const previous = lessonsInSeries(store, lesson)
+    .filter((item) => Number(item.teachingWeek) < Number(lesson.teachingWeek) && item.status === 'done')
+    .sort((a, b) => Number(a.teachingWeek) - Number(b.teachingWeek));
+  const previousPlans = previous.map((item) => `## 第 ${item.teachingWeek} 周\n${String(item.aiResult || item.rawText || '').slice(0, 2800)}`).join('\n\n');
+  const semesterContext = String(lesson.semesterContext || lessonsInSeries(store, lesson).map((item) => item.rawText || '').join('\n\n')).slice(0, 16000);
+  return { semesterContext, previousPlans };
+}
+
+async function processLessons(store, lessonIds, { onUpdate } = {}) {
   const settings = store.getSettings({ includeKey: true });
-  if (!settings.apiKey) return;
-  for (const id of lessonIds) {
+  if (!settings.apiKey) return { processed: 0, failed: 0 };
+  if (!activeLessonIds.has(store)) activeLessonIds.set(store, new Set());
+  const active = activeLessonIds.get(store);
+  const lessons = [...new Set(lessonIds)]
+    .filter((id) => store.getLesson(id) && !active.has(id))
+    .map((id) => store.getLesson(id))
+    .sort((a, b) => lessonSeriesKey(a).localeCompare(lessonSeriesKey(b)) || Number(a.teachingWeek) - Number(b.teachingWeek));
+  const notify = (lesson) => { try { onUpdate?.({ ...lesson }); } catch { /* A disconnected viewer must not stop processing. */ } };
+  for (const lesson of lessons) {
+    active.add(lesson.id);
+    store.updateLesson(lesson.id, { status: 'queued', processingStage: 'queued', error: '' });
+    notify(store.getLesson(lesson.id));
+  }
+
+  let processed = 0;
+  let failed = 0;
+  for (const queuedLesson of lessons) {
+    const id = queuedLesson.id;
     const lesson = store.getLesson(id);
-    if (!lesson) continue;
-    store.updateLesson(id, { status: 'processing', error: '' });
+    if (!lesson) { active.delete(id); continue; }
     try {
-      const aiResult = await generateWeeklyPlan(settings, lesson);
-      store.updateLesson(id, { status: 'done', aiResult, structuredNotes: aiResult });
+      const prerequisite = findLessonPrerequisite(store, lesson);
+      if (prerequisite) {
+        const blocked = prerequisite.status !== 'missing';
+        store.updateLesson(id, {
+          status: blocked ? 'blocked' : 'error',
+          processingStage: '',
+          error: prerequisite.message,
+        });
+        notify(store.getLesson(id));
+        failed += 1;
+        continue;
+      }
+      store.updateLesson(id, { status: 'processing', processingStage: 'planning', error: '', aiResult: '', structuredNotes: '' });
+      notify(store.getLesson(id));
+      const context = buildTeachingContext(store, lesson);
+      let lastSavedAt = 0;
+      const aiResult = await generateWeeklyPlan(settings, lesson, {
+        ...context,
+        onDelta: (partial) => {
+          const current = store.getLesson(id);
+          if (!current) return;
+          Object.assign(current, { aiResult: partial, structuredNotes: partial, updatedAt: new Date().toISOString() });
+          if (Date.now() - lastSavedAt >= 250) { store.save(); lastSavedAt = Date.now(); }
+          notify(current);
+        },
+      });
+      if (!store.getLesson(id)) continue;
+      store.updateLesson(id, { status: 'processing', processingStage: 'exercises', aiResult, structuredNotes: aiResult });
+      notify(store.getLesson(id));
       if (!store.state.exercises.some((item) => item.lessonId === id && !item.targetStudentId)) {
-        const generated = await generateExercises(settings, { ...lesson, aiResult });
+        const generated = await generateExercisesForBlueprint(settings, { ...lesson, aiResult }, lesson.exerciseOptions);
+        if (!store.getLesson(id)) continue;
         store.addExercises(generated.map((item) => ({
           id: crypto.randomUUID(), lessonId: id, targetStudentId: null, published: false,
-          type: ['choice', 'short_answer', 'coding'].includes(item.type) ? item.type : 'short_answer',
+          type: ['choice', 'short_answer', 'application', 'coding'].includes(item.type) ? item.type : 'short_answer',
           question: String(item.question || ''), answer: String(item.answer || ''),
           difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
           knowledgePoint: String(item.knowledgePoint || ''), createdAt: new Date().toISOString(),
         })).filter((item) => item.question && item.answer));
       }
+      if (!store.getLesson(id)) continue;
+      store.updateLesson(id, { status: 'done', processingStage: '', aiResult, structuredNotes: aiResult });
+      notify(store.getLesson(id));
+      processed += 1;
     } catch (error) {
-      store.updateLesson(id, { status: 'error', error: error.message });
+      failed += 1;
+      store.updateLesson(id, { status: 'error', processingStage: '', error: error.message });
+      notify(store.getLesson(id));
+    } finally {
+      active.delete(id);
     }
   }
+  return { processed, failed };
 }
 
 function listen(server, preferredPort) {
@@ -183,7 +304,23 @@ function listen(server, preferredPort) {
 async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }) {
   const store = new JsonStore(runtimeDir);
   const sessions = new Map();
+  const lessonSubscribers = new Map();
   let activePort = preferredPort;
+
+  const lessonStreamPayload = (lesson) => JSON.stringify({
+    id: lesson.id,
+    status: lesson.status,
+    processingStage: lesson.processingStage || '',
+    aiResult: lesson.aiResult || '',
+    error: lesson.error || '',
+    updatedAt: lesson.updatedAt,
+  });
+  const broadcastLesson = (lesson) => {
+    for (const response of lessonSubscribers.get(lesson.id) || []) {
+      try { response.write(`data: ${lessonStreamPayload(lesson)}\n\n`); } catch { /* Closed streams are removed by the request close handler. */ }
+    }
+  };
+  const startProcessing = (ids) => processLessons(store, ids, { onUpdate: broadcastLesson }).catch(() => {});
 
   const server = http.createServer(async (request, response) => {
     const url = new URL(request.url, `http://${request.headers.host || 'localhost'}`);
@@ -237,6 +374,29 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
       if (isStudentApi && session?.role !== 'student') return sendJson(response, 403, { error: '仅学生可访问' });
       if (!isStudentApi && pathname.startsWith('/api/') && session?.role !== 'admin') return sendJson(response, 403, { error: '仅教师可访问' });
 
+      const lessonStreamMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/stream$/);
+      if (request.method === 'GET' && lessonStreamMatch) {
+        const lesson = store.getLesson(lessonStreamMatch[1]);
+        if (!lesson) return sendJson(response, 404, { error: '未找到教案' });
+        response.writeHead(200, {
+          'Content-Type': 'text/event-stream; charset=utf-8',
+          'Cache-Control': 'no-cache, no-transform',
+          Connection: 'keep-alive',
+          'X-Content-Type-Options': 'nosniff',
+        });
+        if (!lessonSubscribers.has(lesson.id)) lessonSubscribers.set(lesson.id, new Set());
+        const subscribers = lessonSubscribers.get(lesson.id);
+        subscribers.add(response);
+        response.write(`data: ${lessonStreamPayload(lesson)}\n\n`);
+        const heartbeat = setInterval(() => response.write(': keep-alive\n\n'), 15000);
+        request.on('close', () => {
+          clearInterval(heartbeat);
+          subscribers.delete(response);
+          if (!subscribers.size) lessonSubscribers.delete(lesson.id);
+        });
+        return;
+      }
+
       if (request.method === 'GET' && pathname === '/api/state') {
         return sendJson(response, 200, {
           settings: store.getSettings(),
@@ -257,7 +417,12 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
       }
       if (request.method === 'POST' && pathname === '/api/settings') {
         const body = await readJson(request);
-        return sendJson(response, 200, { ok: true, settings: store.updateSettings(body) });
+        const settings = store.updateSettings(body);
+        if (settings.hasApiKey) {
+          const pendingIds = store.state.lessons.filter((item) => ['ready', 'queued', 'processing'].includes(item.status)).map((item) => item.id);
+          if (pendingIds.length) startProcessing(pendingIds);
+        }
+        return sendJson(response, 200, { ok: true, settings });
       }
       if (request.method === 'POST' && pathname === '/api/settings/password') {
         const body = await readJson(request);
@@ -290,11 +455,16 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (!file) throw new Error('请选择教案文件');
         const text = await extractDocumentText(file.filename, file.buffer);
         const storedName = `${Date.now()}-${file.filename.replace(/[^\p{L}\p{N}._-]+/gu, '_')}`;
-        fs.writeFileSync(path.join(store.uploadDir, storedName), file.buffer);
         const lessons = buildLessonRecords({ ...fields, filename: file.filename, text });
+        for (const lesson of lessons) {
+          lesson.sourceStoredName = storedName;
+          lesson.exerciseOptions = exerciseBlueprintFromFields(fields, lesson.teachingWeek);
+          if (store.getSettings().hasApiKey) Object.assign(lesson, { status: 'queued', processingStage: 'queued' });
+        }
+        fs.writeFileSync(path.join(store.uploadDir, storedName), file.buffer);
         store.addLessons(lessons);
         const hasApiKey = store.getSettings().hasApiKey;
-        if (hasApiKey) processLessons(store, lessons.map((item) => item.id));
+        if (hasApiKey) startProcessing(lessons.map((item) => item.id));
         return sendJson(response, 201, {
           ok: true,
           count: lessons.length,
@@ -365,9 +535,13 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const lesson = store.getLesson(generateMatch[1]);
         if (!lesson) return sendJson(response, 404, { error: '未找到课次' });
         const body = await readJson(request);
-        const generated = await generateExercises(store.getSettings({ includeKey: true }), lesson, {
-          types: body.types, count: body.count, difficulty: body.difficulty,
-        });
+        const blueprint = { typeConfigs: body.typeConfigs };
+        const requestedTotal = (Array.isArray(body.typeConfigs) ? body.typeConfigs : []).reduce((sum, item) => sum + Math.max(0, Number(item?.count) || 0), 0);
+        if (requestedTotal > 30) throw new Error('当前章节题目总数不能超过 30 道');
+        const normalized = normalizeExerciseBlueprint(blueprint);
+        if (!normalized.length) throw new Error('请至少配置 1 道题');
+        store.updateLesson(lesson.id, { exerciseOptions: { mode: 'current', typeConfigs: normalized } });
+        const generated = await generateExercisesForBlueprint(store.getSettings({ includeKey: true }), lesson, blueprint);
         const records = generated.map((item) => ({ id: crypto.randomUUID(), lessonId: lesson.id, targetStudentId: null, published: false, type: item.type || 'short_answer', question: item.question, answer: item.answer, difficulty: item.difficulty || 'medium', knowledgePoint: item.knowledgePoint || '', createdAt: new Date().toISOString() }));
         store.addExercises(records);
         return sendJson(response, 201, { ok: true, exercises: records });
@@ -504,8 +678,25 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const id = processMatch[1];
         if (!store.getLesson(id)) return sendJson(response, 404, { error: '未找到教案' });
         if (!store.getSettings().hasApiKey) throw new Error('请先在 AI 设置中保存 API Key');
-        processLessons(store, [id]);
+        const prerequisite = findLessonPrerequisite(store, store.getLesson(id));
+        if (prerequisite) throw new Error(prerequisite.message);
+        const lesson = store.getLesson(id);
+        const downstream = lessonsInSeries(store, lesson)
+          .filter((item) => Number(item.teachingWeek) > Number(lesson.teachingWeek) && ['blocked', 'queued'].includes(item.status))
+          .map((item) => item.id);
+        startProcessing([id, ...downstream]);
         return sendJson(response, 202, { ok: true });
+      }
+      if (request.method === 'POST' && pathname === '/api/lessons/batch-delete') {
+        const body = await readJson(request);
+        const ids = [...new Set((Array.isArray(body.ids) ? body.ids : []).map(String))].slice(0, 500);
+        if (!ids.length) throw new Error('请至少选择一个教案');
+        const deleted = store.deleteLessons(ids);
+        for (const id of ids) {
+          for (const subscriber of lessonSubscribers.get(id) || []) subscriber.end();
+          lessonSubscribers.delete(id);
+        }
+        return sendJson(response, 200, { ok: true, deleted });
       }
       if (request.method === 'DELETE' && pathname.startsWith('/api/lessons/')) {
         const id = pathname.slice('/api/lessons/'.length);
@@ -540,11 +731,19 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
   });
 
   activePort = await listen(server, preferredPort);
+  if (store.getSettings().hasApiKey) {
+    const pendingIds = store.state.lessons.filter((item) => ['ready', 'queued', 'processing'].includes(item.status)).map((item) => item.id);
+    if (pendingIds.length) startProcessing(pendingIds);
+  }
   return {
     port: activePort,
     store,
-    close: () => server.close(),
+    close: () => {
+      for (const subscribers of lessonSubscribers.values()) for (const response of subscribers) response.end();
+      lessonSubscribers.clear();
+      return server.close();
+    },
   };
 }
 
-module.exports = { createLanServer, getLanUrls, parseCsv, processLessons };
+module.exports = { buildTeachingContext, createLanServer, exerciseBlueprintFromFields, findLessonPrerequisite, getLanUrls, parseCsv, processLessons };

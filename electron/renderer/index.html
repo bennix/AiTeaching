@@ -40,10 +40,11 @@
         <div class="metrics">
           <article><span>教学周记录</span><strong id="metric-total">0</strong></article>
           <article><span>AI 已整理</span><strong id="metric-done">0</strong></article>
-          <article><span>处理中</span><strong id="metric-processing">0</strong></article>
+          <article><span>自动整理中</span><strong id="metric-processing">0</strong></article>
         </div>
         <div class="panel">
-          <div class="panel-heading"><div><h2>教案列表</h2><p>整学期教案会按指定周数生成多条教学周记录</p></div><button class="button primary" data-go="import">导入新教案</button></div>
+          <div class="panel-heading"><div><h2>教案列表</h2><p>整学期教案只需导入一次，全部教学周会自动拆分并整理</p></div><div class="inline"><button id="batch-mode-button" class="button secondary" type="button">批量管理</button><button class="button primary" data-go="import">导入新教案</button></div></div>
+          <div id="batch-toolbar" class="batch-toolbar" hidden><label><input id="select-all-lessons" type="checkbox"> 全选当前列表</label><span>已选择 <strong id="selected-lesson-count">0</strong> 项</span><button id="batch-delete-button" class="button danger" type="button" disabled>删除所选教案</button><button id="batch-cancel-button" class="button secondary" type="button">取消</button></div>
           <div id="lesson-list" class="lesson-list"></div>
         </div>
       </section>
@@ -54,10 +55,10 @@
           <form id="import-form">
             <div class="scope-picker">
               <label class="scope-card selected"><input type="radio" name="scope" value="week" checked><strong>单个教学周</strong><span>一个文件对应一个教学周</span></label>
-              <label class="scope-card"><input type="radio" name="scope" value="semester"><strong>整学期教案</strong><span>按指定教学周数自动拆分</span></label>
+              <label class="scope-card"><input type="radio" name="scope" value="semester"><strong>整学期教案</strong><span>一次导入，全部教学周自动拆分并整理</span></label>
             </div>
             <div class="form-grid">
-              <label><span>课程名称</span><input name="courseName" required placeholder="例如：Python 程序设计"></label>
+              <label><span>课程名称</span><input name="courseName" required placeholder="例如：高一数学 / 大学英语 / 程序设计"></label>
               <label><span>班级（可选）</span><input name="className" placeholder="例如：计算机 2026-1 班"></label>
               <label><span id="date-label">上课日期</span><input type="date" name="startDate" required></label>
               <label id="week-number-field"><span>教学周</span><input type="number" name="weekNumber" min="1" max="40" value="1"></label>
@@ -65,6 +66,12 @@
             </div>
             <label class="file-drop"><input id="lesson-file" type="file" name="lessonFile" accept=".pdf,.docx,.md,.markdown" required><span class="file-icon">＋</span><strong id="file-label">选择教案文件</strong><small>PDF / DOCX / MD，最大 30 MB</small></label>
             <div class="notice"><strong>处理方式：</strong><span id="scope-help">文件将保存为一个教学周；若已配置 API Key，会自动生成教学周方案。</span></div>
+            <section class="exercise-setup">
+              <div class="exercise-setup-heading"><div><h3>同步生成题库</h3><p>教学方案整理完成后，按下面参数生成题库，本周题库完成后才会进入下一周。</p></div><label id="exercise-mode-field"><span>配置范围</span><select id="exercise-mode" name="exerciseMode"><option value="uniform">所有章节统一配置</option><option value="per_week">逐章节分别配置</option></select></label></div>
+              <div id="uniform-exercise-settings" class="exercise-config-grid"></div>
+              <div id="per-week-exercise-settings" class="per-week-exercise-settings" hidden></div>
+              <small class="muted">每个章节合计 1–30 题；各题型可分别指定数量和难度。</small>
+            </section>
             <button id="import-button" class="button primary wide" type="submit">导入并处理</button>
           </form>
         </div>
