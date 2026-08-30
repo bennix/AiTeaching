@@ -222,24 +222,27 @@ $('#import-form').addEventListener('submit', async (event) => {
 
 $('#settings-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
+  const formElement = event.currentTarget;
+  const form = new FormData(formElement);
   try {
     await api('/api/settings', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(form)) });
     toast('AI 设置已保存');
-    event.currentTarget.apiKey.value = '';
+    formElement.apiKey.value = '';
     await refresh();
   } catch (error) { toast(error.message, true); }
 });
 
 $('#password-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  try { await api('/api/settings/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); event.currentTarget.reset(); toast('教师密码已修改'); }
+  const formElement = event.currentTarget;
+  try { await api('/api/settings/password', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(formElement))) }); formElement.reset(); toast('教师密码已修改'); }
   catch (error) { toast(error.message, true); }
 });
 
 $('#mail-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  try { await api('/api/settings/mail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); event.currentTarget.password.value = ''; toast('邮箱设置已保存'); await refresh(); }
+  const formElement = event.currentTarget;
+  try { await api('/api/settings/mail', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(formElement))) }); formElement.password.value = ''; toast('邮箱设置已保存'); await refresh(); }
   catch (error) { toast(error.message, true); }
 });
 
@@ -251,7 +254,8 @@ $('#test-mail-button').addEventListener('click', async (event) => {
 
 $('#student-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  try { await api('/api/students', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); event.currentTarget.reset(); toast('学生已保存'); await refresh(); }
+  const formElement = event.currentTarget;
+  try { await api('/api/students', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(formElement))) }); formElement.reset(); toast('学生已保存'); await refresh(); }
   catch (error) { toast(error.message, true); }
 });
 
@@ -264,7 +268,8 @@ $('#roster-form').addEventListener('submit', async (event) => {
 
 $('#class-material-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  try { await api('/api/materials', { method: 'POST', body: new FormData(event.currentTarget) }); event.currentTarget.reset(); toast('班级资料已上传'); await refresh(); }
+  const formElement = event.currentTarget;
+  try { await api('/api/materials', { method: 'POST', body: new FormData(formElement) }); formElement.reset(); toast('班级资料已上传'); await refresh(); }
   catch (error) { toast(error.message, true); }
 });
 
