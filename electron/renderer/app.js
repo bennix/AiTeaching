@@ -1,4 +1,4 @@
-const state = { data: null, analytics: null, analyticsFilters: {}, activeLesson: null, activeTab: 'ai', activeStudentClassKey: '', poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
+const state = { data: null, analytics: null, analyticsFilters: {}, activeLesson: null, activeTab: 'ai', activeLessonGroupKey: '', activeStudentClassKey: '', poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
 const viewMeta = {
   lessons: ['教案与教学周', '管理单周教案与整学期教学安排'],
   import: ['导入教案', '支持 PDF、Word 和 Markdown 教案'],
@@ -46,8 +46,38 @@ function statusLabel(status, stage, warning = '') {
 }
 
 function lessonClassLabel(lesson) {
-  const names = Array.isArray(lesson.classNames) ? lesson.classNames : [lesson.className];
+  const names = [...(Array.isArray(lesson.classNames) ? lesson.classNames : []), lesson.className];
   return [...new Set(names.map((item) => String(item || '').trim()).filter(Boolean))].join('、');
+}
+
+function lessonGroups(lessons = []) {
+  const groups = new Map();
+  for (const lesson of lessons) {
+    const courseName = String(lesson.courseName || '').trim();
+    const classNames = [...new Set([...(Array.isArray(lesson.classNames) ? lesson.classNames : []), lesson.className]
+      .map((item) => String(item || '').trim()).filter(Boolean))]
+      .sort((left, right) => left.localeCompare(right, 'zh-CN-u-co-stroke', { numeric: true }));
+    const key = `${courseName}\u241f${classNames.join('\u241e')}`;
+    if (!groups.has(key)) groups.set(key, { key, courseName, classNames, lessons: [] });
+    groups.get(key).lessons.push(lesson);
+  }
+  return [...groups.values()]
+    .map((group) => ({
+      ...group,
+      count: group.lessons.length,
+      doneCount: group.lessons.filter((lesson) => lesson.status === 'done').length,
+      processingCount: group.lessons.filter((lesson) => lesson.status === 'processing').length,
+    }))
+    .sort((left, right) => `${left.courseName}${left.classNames.join('')}`.localeCompare(`${right.courseName}${right.classNames.join('')}`, 'zh-CN'));
+}
+
+function activeLessonGroup() {
+  const groups = lessonGroups(state.data?.lessons || []);
+  return groups.find((group) => group.key === state.activeLessonGroupKey) || groups[0] || null;
+}
+
+function visibleLessons() {
+  return activeLessonGroup()?.lessons || [];
 }
 
 function studentClassGroups(students = []) {
@@ -99,16 +129,29 @@ function updateBatchToolbar() {
   $('#batch-mode-button').textContent = state.batchMode ? '退出批量管理' : '批量管理';
   $('#selected-lesson-count').textContent = state.selectedLessonIds.size;
   $('#batch-delete-button').disabled = !state.selectedLessonIds.size;
-  const lessonIds = (state.data?.lessons || []).map((item) => item.id);
+  const lessonIds = visibleLessons().map((item) => item.id);
   $('#select-all-lessons').checked = Boolean(lessonIds.length) && lessonIds.every((id) => state.selectedLessonIds.has(id));
 }
 
 function renderLessons() {
   const lessons = state.data.lessons || [];
+  const groups = lessonGroups(lessons);
+  const selectedGroup = groups.find((group) => group.key === state.activeLessonGroupKey) || groups[0] || null;
+  state.activeLessonGroupKey = selectedGroup?.key || '';
+  const selectedLessons = selectedGroup?.lessons || [];
   $('#metric-total').textContent = lessons.length;
   $('#metric-done').textContent = lessons.filter((item) => item.status === 'done').length;
   $('#metric-processing').textContent = lessons.filter((item) => item.status === 'processing').length;
-  $('#lesson-list').innerHTML = lessons.length ? lessons.map((lesson) => `
+  $('#lesson-group-list').innerHTML = groups.length ? groups.map((group) => `
+    <button class="lesson-group-item${group.key === state.activeLessonGroupKey ? ' active' : ''}" type="button" data-lesson-group-key="${escapeHtml(group.key)}">
+      <span><strong>${escapeHtml(group.courseName || '未命名课程')}</strong><small>${escapeHtml(group.classNames.join('、') || '未关联班级')}</small></span>
+      <b>${group.count}</b>
+    </button>`).join('') : '<div class="lesson-group-empty">还没有课程教案</div>';
+  $('#active-lesson-group-name').textContent = selectedGroup?.courseName || (selectedGroup ? '未命名课程' : '教学周');
+  $('#active-lesson-group-meta').textContent = selectedGroup
+    ? `${selectedGroup.classNames.join('、') || '未关联班级'} · ${selectedGroup.count} 个教学周 · ${selectedGroup.doneCount} 个已完成${selectedGroup.processingCount ? ` · ${selectedGroup.processingCount} 个处理中` : ''}`
+    : '请先导入一个教学周或整学期教案';
+  $('#lesson-list').innerHTML = selectedLessons.length ? selectedLessons.map((lesson) => `
     <article class="lesson-row${state.batchMode ? ' batch-mode' : ''}" data-lesson-id="${escapeHtml(lesson.id)}">
       ${state.batchMode ? `<label class="lesson-select"><input type="checkbox" data-select-lesson="${escapeHtml(lesson.id)}" ${state.selectedLessonIds.has(lesson.id) ? 'checked' : ''} aria-label="选择第 ${escapeHtml(lesson.teachingWeek)} 周"></label>` : ''}
       <div class="week-badge">第 ${escapeHtml(lesson.teachingWeek)} 周</div>
@@ -116,6 +159,10 @@ function renderLessons() {
       <span class="status ${escapeHtml(lesson.status)}">${escapeHtml(statusLabel(lesson.status, lesson.processingStage, lesson.warning))}</span>
       <span class="date">${escapeHtml(lesson.date || '')}</span>
     </article>`).join('') : '<div class="empty">还没有教案。请先导入一个教学周或整学期教案。</div>';
+  $$('[data-lesson-group-key]').forEach((button) => button.addEventListener('click', () => {
+    state.activeLessonGroupKey = button.dataset.lessonGroupKey;
+    renderLessons();
+  }));
   $$('.lesson-row').forEach((row) => row.addEventListener('click', (event) => {
     if (state.batchMode) {
       if (!event.target.matches('[data-select-lesson]')) row.querySelector('[data-select-lesson]').click();
@@ -526,7 +573,9 @@ $('#batch-cancel-button').addEventListener('click', () => {
   renderLessons();
 });
 $('#select-all-lessons').addEventListener('change', (event) => {
-  state.selectedLessonIds = new Set(event.target.checked ? (state.data?.lessons || []).map((item) => item.id) : []);
+  const ids = visibleLessons().map((item) => item.id);
+  if (event.target.checked) ids.forEach((id) => state.selectedLessonIds.add(id));
+  else ids.forEach((id) => state.selectedLessonIds.delete(id));
   renderLessons();
 });
 $('#batch-delete-button').addEventListener('click', async () => {

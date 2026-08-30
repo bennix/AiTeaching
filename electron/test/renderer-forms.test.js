@@ -91,3 +91,35 @@ test('teacher student directory separates classes and only renders the selected 
   assert.match(source, /selectedGroup\.students\.map/);
   assert.match(source, /data-student-class-key/);
 });
+
+test('teacher lesson directory groups teaching weeks by course and linked classes', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  const css = ['extra.css', 'styles.css']
+    .map((filename) => fs.readFileSync(path.join(__dirname, '..', 'renderer', filename), 'utf8')).join('\n');
+  for (const id of ['lesson-group-list', 'active-lesson-group-name', 'active-lesson-group-meta', 'lesson-list']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(source, /function lessonGroups\(/);
+  assert.match(source, /state\.activeLessonGroupKey/);
+  assert.match(source, /selectedGroup\?\.lessons \|\| \[\]/);
+  assert.match(source, /data-lesson-group-key/);
+  assert.match(source, /function visibleLessons\(/);
+  assert.match(css, /\.lesson-directory\s*\{/);
+  assert.match(css, /\.lesson-group-item\.active\s*\{/);
+  assert.match(css, /\.batch-toolbar\[hidden\]\s*\{display:none\}/);
+
+  const functionStart = source.indexOf('function lessonGroups(');
+  const functionEnd = source.indexOf('\nfunction activeLessonGroup(', functionStart);
+  const groupLessons = Function(`${source.slice(functionStart, functionEnd)}; return lessonGroups;`)();
+  const groups = groupLessons([
+    { id: 'math-1', courseName: '数学', classNames: ['二班', '一班'], status: 'done' },
+    { id: 'math-2', courseName: '数学', classNames: ['一班', '二班'], status: 'processing' },
+    { id: 'english-1', courseName: '英语', className: '三班', status: 'ready' },
+  ]);
+  const math = groups.find((group) => group.courseName === '数学');
+  assert.equal(groups.length, 2);
+  assert.deepEqual(math.classNames, ['一班', '二班']);
+  assert.equal(math.count, 2);
+  assert.equal(math.doneCount, 1);
+  assert.equal(math.processingCount, 1);
+});

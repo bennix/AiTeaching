@@ -46,7 +46,16 @@
         <div class="panel">
           <div class="panel-heading"><div><h2>教案列表</h2><p>整学期教案只需导入一次，全部教学周会自动拆分并整理</p></div><div class="inline"><button id="batch-mode-button" class="button secondary" type="button">批量管理</button><button class="button primary" data-go="import">导入新教案</button></div></div>
           <div id="batch-toolbar" class="batch-toolbar" hidden><label><input id="select-all-lessons" type="checkbox"> 全选当前列表</label><span>已选择 <strong id="selected-lesson-count">0</strong> 项</span><button id="batch-delete-button" class="button danger" type="button" disabled>删除所选教案</button><button id="batch-cancel-button" class="button secondary" type="button">取消</button></div>
-          <div id="lesson-list" class="lesson-list"></div>
+          <div class="lesson-directory">
+            <aside class="lesson-group-directory">
+              <div class="lesson-directory-heading"><strong>课程与班级</strong><span>分层查看</span></div>
+              <div id="lesson-group-list" class="lesson-group-list"></div>
+            </aside>
+            <section class="lesson-weeks">
+              <div class="lesson-weeks-heading"><div><h3 id="active-lesson-group-name">教学周</h3><p id="active-lesson-group-meta">请选择课程与班级</p></div></div>
+              <div id="lesson-list" class="lesson-list"></div>
+            </section>
+          </div>
         </div>
       </section>
 
