@@ -81,3 +81,51 @@ test('教师和学生通过同一局域网服务完成导入、签到和选择�
   assert.equal(server.store.state.exercises.length, 0);
   assert.equal(server.store.state.submissions.length, 0);
 });
+
+test('学生可以选择已有课程并只读取所选课程的资料与已发放习题', async (context) => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-student-courses-'));
+  const rendererDir = path.join(__dirname, '..', 'renderer');
+  const server = await createLanServer({ runtimeDir, rendererDir, preferredPort: 0 });
+  context.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  server.store.upsertStudent({ studentId: 'S002', name: '跨课程学生', courseName: '旧课程', className: '学生行政班' });
+  const lessons = [
+    { id: 'math-lesson', title: '高一数学 · 第 1 周', courseName: '高一数学', className: '数学测试班', teachingWeek: 1, totalWeeks: 15, date: '2026-09-01', status: 'done', aiResult: '集合与函数', createdAt: '2026-09-01T00:00:00.000Z' },
+    { id: 'english-lesson', title: '高一英语 · 第 1 周', courseName: '高一英语', className: '英语测试班', teachingWeek: 1, totalWeeks: 15, date: '2026-09-01', status: 'done', aiResult: 'Vocabulary', createdAt: '2026-09-01T00:00:00.000Z' },
+  ];
+  server.store.addLessons(lessons);
+  server.store.addExercises([
+    { id: 'math-exercise', lessonId: 'math-lesson', published: true, targetStudentId: null, type: 'choice', question: '数学题', answer: 'A' },
+    { id: 'english-exercise', lessonId: 'english-lesson', published: true, targetStudentId: null, type: 'choice', question: 'English question', answer: 'B' },
+  ]);
+  const mathPath = path.join(runtimeDir, 'math.md');
+  const englishPath = path.join(runtimeDir, 'english.md');
+  fs.writeFileSync(mathPath, '# 数学资料');
+  fs.writeFileSync(englishPath, '# English material');
+  server.store.state.materials.push(
+    { id: 'math-material', lessonId: 'math-lesson', filename: '数学资料.md', filePath: mathPath, type: 'manual' },
+    { id: 'english-material', lessonId: 'english-lesson', filename: 'English.md', filePath: englishPath, type: 'manual' },
+  );
+  server.store.save();
+
+  const catalog = await json(`${base}/api/public/courses`);
+  assert.deepEqual(catalog.body.courses.map((item) => item.label), ['高一数学 · 数学测试班', '高一英语 · 英语测试班']);
+  const math = catalog.body.courses.find((item) => item.courseName === '高一数学');
+  const english = catalog.body.courses.find((item) => item.courseName === '高一英语');
+  const login = await json(`${base}/api/auth/student`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: 'S002', className: '学生行政班', courseId: math.id }) });
+  const studentCookie = login.response.headers.get('set-cookie').split(';')[0];
+  const mathState = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
+  assert.equal(mathState.body.selectedCourseId, math.id);
+  assert.deepEqual(mathState.body.lessons.map((item) => item.id), ['math-lesson']);
+  assert.deepEqual(mathState.body.exercises.map((item) => item.id), ['math-exercise']);
+  assert.deepEqual(mathState.body.materials.map((item) => item.id), ['math-material']);
+
+  const switched = await json(`${base}/api/student/course`, { method: 'POST', headers: { Cookie: studentCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ courseId: english.id }) });
+  assert.equal(switched.body.selectedCourseId, english.id);
+  const englishState = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
+  assert.deepEqual(englishState.body.lessons.map((item) => item.id), ['english-lesson']);
+  assert.deepEqual(englishState.body.exercises.map((item) => item.id), ['english-exercise']);
+  assert.deepEqual(englishState.body.materials.map((item) => item.id), ['english-material']);
+  const crossCourseSubmit = await json(`${base}/api/student/submit`, { method: 'POST', headers: { Cookie: studentCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseId: 'math-exercise', answer: 'A' }) });
+  assert.equal(crossCourseSubmit.response.status, 400);
+});

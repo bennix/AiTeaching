@@ -43,6 +43,7 @@ class JsonStore {
     this.uploadDir = path.join(runtimeDir, 'uploads');
     fs.mkdirSync(this.uploadDir, { recursive: true });
     this.encryptionKey = this.#loadOrCreateKey();
+    this.#backupExistingState();
     this.state = this.#load();
     const filenamesRepaired = this.#repairStoredFilenames();
     const coursewareDeduplicated = this.#deduplicateGeneratedCourseware();
@@ -56,6 +57,22 @@ class JsonStore {
     const key = crypto.randomBytes(32);
     fs.writeFileSync(this.keyPath, key, { mode: 0o600 });
     return key;
+  }
+
+  #backupExistingState() {
+    if (!fs.existsSync(this.dataPath)) return;
+    try {
+      const day = new Date().toISOString().slice(0, 10);
+      const backupDir = path.join(this.runtimeDir, 'automatic-backups', day);
+      if (fs.existsSync(path.join(backupDir, 'teaching-data.json'))) return;
+      fs.mkdirSync(backupDir, { recursive: true });
+      fs.copyFileSync(this.dataPath, path.join(backupDir, 'teaching-data.json'));
+      if (fs.existsSync(this.keyPath)) {
+        const backupKeyPath = path.join(backupDir, '.data-key');
+        fs.copyFileSync(this.keyPath, backupKeyPath);
+        fs.chmodSync(backupKeyPath, 0o600);
+      }
+    } catch { /* A backup failure must not prevent the application from starting. */ }
   }
 
   #load() {

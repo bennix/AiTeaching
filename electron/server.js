@@ -44,7 +44,35 @@ function cookies(request) {
   return Object.fromEntries(String(request.headers.cookie || '').split(';').map((part) => part.trim().split('=').map(decodeURIComponent)).filter((pair) => pair.length === 2));
 }
 
-function visibleLessonsForStudent(store, student) {
+function studentCourseCatalog(store) {
+  const courses = new Map();
+  for (const lesson of store.state.lessons.filter((item) => item.status === 'done')) {
+    const courseName = String(lesson.courseName || '').trim();
+    const className = String(lesson.className || '').trim();
+    if (!courseName) continue;
+    const id = Buffer.from(JSON.stringify([courseName, className]), 'utf8').toString('base64url');
+    if (!courses.has(id)) courses.set(id, { id, courseName, className, label: className ? `${courseName} · ${className}` : courseName });
+  }
+  return [...courses.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+}
+
+function resolveStudentCourse(store, student, courseId = '') {
+  const courses = studentCourseCatalog(store);
+  const requested = courses.find((item) => item.id === courseId);
+  if (requested) return requested;
+  return courses.find((item) => item.courseName === student.courseName && item.className === student.className)
+    || courses.find((item) => item.courseName === student.courseName)
+    || courses.find((item) => item.className === student.className)
+    || courses[0]
+    || null;
+}
+
+function visibleLessonsForStudent(store, student, course = null) {
+  if (course) {
+    return store.state.lessons.filter((lesson) => lesson.status === 'done'
+      && lesson.courseName === course.courseName
+      && String(lesson.className || '') === course.className);
+  }
   return store.state.lessons.filter((lesson) => lesson.status === 'done'
     && (!student.courseName || !lesson.courseName || lesson.courseName === student.courseName)
     && (!student.className || !lesson.className || lesson.className === student.className));
@@ -425,9 +453,11 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const student = store.state.students.find((item) => item.studentId === String(body.studentId || '').trim()
           && (!body.className || item.className === body.className));
         if (!student) return sendJson(response, 401, { error: '学号或班级不匹配' });
+        const course = resolveStudentCourse(store, student, String(body.courseId || ''));
+        if (body.courseId && course?.id !== body.courseId) return sendJson(response, 400, { error: '所选课程不存在或尚未完成发布' });
         const token = crypto.randomUUID();
-        sessions.set(token, { role: 'student', studentId: student.studentId });
-        return sendJson(response, 200, { ok: true, role: 'student' }, { 'Set-Cookie': `aiaid_session=${token}; HttpOnly; SameSite=Lax; Path=/` });
+        sessions.set(token, { role: 'student', studentId: student.studentId, courseId: course?.id || '' });
+        return sendJson(response, 200, { ok: true, role: 'student', selectedCourseId: course?.id || '' }, { 'Set-Cookie': `aiaid_session=${token}; HttpOnly; SameSite=Lax; Path=/` });
       }
       if (request.method === 'POST' && pathname === '/api/auth/logout') {
         sessions.delete(cookies(request).aiaid_session);
@@ -435,6 +465,9 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
       }
       if (request.method === 'GET' && pathname === '/api/public/classes') {
         return sendJson(response, 200, { classes: [...new Set(store.state.students.map((item) => item.className).filter(Boolean))].sort() });
+      }
+      if (request.method === 'GET' && pathname === '/api/public/courses') {
+        return sendJson(response, 200, { courses: studentCourseCatalog(store) });
       }
 
       const session = sessions.get(cookies(request).aiaid_session);
@@ -752,10 +785,20 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         return sendJson(response, 200, { ok: true });
       }
 
+      if (request.method === 'POST' && pathname === '/api/student/course') {
+        const body = await readJson(request);
+        const student = store.state.students.find((item) => item.studentId === session.studentId);
+        const course = studentCourseCatalog(store).find((item) => item.id === String(body.courseId || ''));
+        if (!student || !course) return sendJson(response, 404, { error: '所选课程不存在或尚未完成发布' });
+        session.courseId = course.id;
+        return sendJson(response, 200, { ok: true, selectedCourseId: course.id });
+      }
+
       const studentMaterialPreviewMatch = pathname.match(/^\/api\/student\/material\/([^/]+)\/preview$/);
       if (request.method === 'GET' && studentMaterialPreviewMatch) {
         const student = store.state.students.find((item) => item.studentId === session.studentId);
-        const lessons = visibleLessonsForStudent(store, student);
+        const course = resolveStudentCourse(store, student, session.courseId);
+        const lessons = visibleLessonsForStudent(store, student, course);
         const lessonIds = new Set(lessons.map((item) => item.id));
         const material = store.state.materials.find((item) => item.id === studentMaterialPreviewMatch[1] && lessonIds.has(item.lessonId));
         if (!material) return sendJson(response, 404, { error: '课件不存在或尚未发布' });
@@ -766,10 +809,11 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
       const studentMaterialDownloadMatch = pathname.match(/^\/api\/student\/material\/([^/]+)\/download$/);
       if (request.method === 'GET' && studentMaterialDownloadMatch) {
         const student = store.state.students.find((item) => item.studentId === session.studentId);
-        const lessons = visibleLessonsForStudent(store, student);
+        const course = resolveStudentCourse(store, student, session.courseId);
+        const lessons = visibleLessonsForStudent(store, student, course);
         const lessonIds = new Set(lessons.map((item) => item.id));
         const material = store.state.materials.find((item) => item.id === studentMaterialDownloadMatch[1] && lessonIds.has(item.lessonId))
-          || store.state.classMaterials.find((item) => item.id === studentMaterialDownloadMatch[1] && (!item.className || item.className === student.className) && (!item.courseName || item.courseName === student.courseName));
+          || store.state.classMaterials.find((item) => item.id === studentMaterialDownloadMatch[1] && (!item.className || item.className === course?.className) && (!item.courseName || item.courseName === course?.courseName));
         if (!material || !fs.existsSync(material.filePath)) return sendJson(response, 404, { error: '资料不存在' });
         response.writeHead(200, {
           'Content-Type': 'application/octet-stream',
@@ -780,25 +824,37 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
 
       if (request.method === 'GET' && pathname === '/api/student/state') {
         const student = store.state.students.find((item) => item.studentId === session.studentId);
-        const lessons = visibleLessonsForStudent(store, student);
+        const availableCourses = studentCourseCatalog(store);
+        const course = resolveStudentCourse(store, student, session.courseId);
+        session.courseId = course?.id || '';
+        const lessons = visibleLessonsForStudent(store, student, course);
         const lessonIds = new Set(lessons.map((item) => item.id));
         const exercises = store.state.exercises.filter((item) => lessonIds.has(item.lessonId) && item.published && (!item.targetStudentId || item.targetStudentId === student.studentId));
-        const submissions = store.state.submissions.filter((item) => item.studentId === student.studentId);
+        const exerciseIds = new Set(exercises.map((item) => item.id));
+        const submissions = store.state.submissions.filter((item) => item.studentId === student.studentId && exerciseIds.has(item.exerciseId));
         const materials = store.state.materials.filter((item) => lessonIds.has(item.lessonId)).map(({ filePath, ...item }) => item);
-        const classMaterials = store.state.classMaterials.filter((item) => (!item.className || item.className === student.className) && (!item.courseName || item.courseName === student.courseName)).map(({ filePath, ...item }) => item);
-        return sendJson(response, 200, { student, lessons, exercises, submissions, attendance: store.state.attendance.filter((item) => item.studentId === student.studentId), materials, classMaterials, report: store.state.studentReports.find((item) => item.studentId === student.studentId) || null });
+        const classMaterials = store.state.classMaterials.filter((item) => (!item.className || item.className === course?.className) && (!item.courseName || item.courseName === course?.courseName)).map(({ filePath, ...item }) => item);
+        return sendJson(response, 200, {
+          student, availableCourses, selectedCourseId: course?.id || '', lessons, exercises, submissions,
+          attendance: store.state.attendance.filter((item) => item.studentId === student.studentId && lessonIds.has(item.lessonId)),
+          materials, classMaterials, report: store.state.studentReports.find((item) => item.studentId === student.studentId) || null,
+        });
       }
       if (request.method === 'POST' && pathname === '/api/student/attendance') {
         const body = await readJson(request);
         const student = store.state.students.find((item) => item.studentId === session.studentId);
-        const lesson = visibleLessonsForStudent(store, student).find((item) => item.id === body.lessonId);
+        const course = resolveStudentCourse(store, student, session.courseId);
+        const lesson = visibleLessonsForStudent(store, student, course).find((item) => item.id === body.lessonId);
         if (!lesson) throw new Error('当前课次不可签到');
         store.addAttendance({ id: crypto.randomUUID(), lessonId: lesson.id, studentId: student.studentId, status: 'present', signedAt: new Date().toISOString() });
         return sendJson(response, 200, { ok: true });
       }
       if (request.method === 'POST' && pathname === '/api/student/submit') {
         const body = await readJson(request);
-        const exercise = store.state.exercises.find((item) => item.id === body.exerciseId && item.published && (!item.targetStudentId || item.targetStudentId === session.studentId));
+        const student = store.state.students.find((item) => item.studentId === session.studentId);
+        const course = resolveStudentCourse(store, student, session.courseId);
+        const lessonIds = new Set(visibleLessonsForStudent(store, student, course).map((item) => item.id));
+        const exercise = store.state.exercises.find((item) => item.id === body.exerciseId && lessonIds.has(item.lessonId) && item.published && (!item.targetStudentId || item.targetStudentId === session.studentId));
         if (!exercise) throw new Error('题目不可提交');
         const existing = store.state.submissions.find((item) => item.studentId === session.studentId && item.exerciseId === exercise.id);
         if (existing) throw new Error('该题已经提交过');

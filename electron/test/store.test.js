@@ -94,3 +94,15 @@ test('loading existing data repairs a completed plan incorrectly marked failed b
   assert.match(reloaded.state.lessons[0].warning, /已保留/);
   assert.equal(reloaded.state.lessons[0].planCompletedAt, '2026-08-30T00:00:00.000Z');
 });
+
+test('opening existing data creates a daily upgrade-safe snapshot outside the app bundle', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-backup-'));
+  const store = new JsonStore(runtimeDir);
+  store.addLessons([{ id: 'lesson-backup', title: '升级前教案', status: 'done' }]);
+  new JsonStore(runtimeDir);
+  const day = new Date().toISOString().slice(0, 10);
+  const backupDir = path.join(runtimeDir, 'automatic-backups', day);
+  const snapshot = JSON.parse(fs.readFileSync(path.join(backupDir, 'teaching-data.json'), 'utf8'));
+  assert.equal(snapshot.lessons[0].title, '升级前教案');
+  assert.equal(fs.existsSync(path.join(backupDir, '.data-key')), true);
+});

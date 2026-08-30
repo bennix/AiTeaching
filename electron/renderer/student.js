@@ -14,8 +14,14 @@ function feedbackMarkup(submission) {
 }
 function render() {
   const data = studentState.data; const student = data.student;
-  $('#student-identity').textContent = `${student.name} · ${student.className || '未分班'}`;
+  const selectedCourse = data.availableCourses.find((item) => item.id === data.selectedCourseId);
+  $('#student-identity').textContent = `${student.name} · ${student.className || '未分班'}${selectedCourse ? ` · ${selectedCourse.courseName}` : ''}`;
   $('#student-welcome').textContent = `${student.name}，你好`;
+  const courseSelect = $('#student-course-select');
+  courseSelect.innerHTML = data.availableCourses.length
+    ? data.availableCourses.map((item) => `<option value="${esc(item.id)}" ${item.id === data.selectedCourseId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')
+    : '<option value="">暂无已发布课程</option>';
+  courseSelect.disabled = !data.availableCourses.length;
   const select = $('#student-lesson-select');
   select.innerHTML = data.lessons.map((item) => `<option value="${esc(item.id)}" ${item.id === studentState.lessonId ? 'selected' : ''}>第 ${item.teachingWeek} 周 · ${esc(item.title)}</option>`).join('');
   const lesson = selectedLesson();
@@ -37,7 +43,11 @@ function render() {
   }).join('') : '<div class="empty">老师尚未发放本周练习。</div>';
   RichText.typeset($('#student-exercises'));
   $$('[data-exercise-form]').forEach((form) => form.addEventListener('submit', submitAnswer));
-  const materials = [...data.classMaterials.map((item) => ({ ...item, scope: '班级资料' })), ...data.materials.filter((item) => !lesson || item.lessonId === lesson.id).map((item) => ({ ...item, scope: '本周资料' }))];
+  const lessonById = new Map(data.lessons.map((item) => [item.id, item]));
+  const materials = [
+    ...data.classMaterials.map((item) => ({ ...item, scope: '课程公共资料' })),
+    ...data.materials.map((item) => ({ ...item, scope: lessonById.has(item.lessonId) ? `第 ${lessonById.get(item.lessonId).teachingWeek} 周资料` : '课程资料' })),
+  ];
   $('#student-materials').innerHTML = materials.length ? materials.map((item) => `<article class="material-card"><strong>${esc(item.filename)}</strong><span>${esc(item.scope)}${item.type === 'ai_generated' ? ' · Markdown / LaTeX' : ''}</span><div class="material-actions">${item.type === 'ai_generated' ? `<button class="button primary" data-student-preview="${esc(item.id)}">预览课件</button>` : ''}<a class="button secondary" href="/api/student/material/${esc(item.id)}/download">下载</a></div></article>`).join('') : '<div class="empty">老师尚未发布课程资料。</div>';
   $$('[data-student-preview]').forEach((button) => button.addEventListener('click', () => previewStudentCourseware(button.dataset.studentPreview)));
   $('#student-history').innerHTML = data.submissions.length ? [...data.submissions].reverse().map((submission) => { const exercise = data.exercises.find((item) => item.id === submission.exerciseId); return `<div class="history-card"><span class="badge">${submission.correct ? '正确' : '待巩固'}</span><div class="markdown-body">${richHtml(exercise?.question || '题目')}</div><div><strong>我的答案：</strong><div class="markdown-body">${richHtml(submission.answer)}</div></div><div class="muted markdown-body">${richHtml(submission.feedback)}</div></div>`; }).join('') : '<div class="empty">还没有作答记录。</div>';
@@ -50,8 +60,9 @@ async function previewStudentCourseware(materialId) { try { const result = await
 async function submitAnswer(event) { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); if (button) button.disabled = true; try { const result = await api('/api/student/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseId: form.dataset.exerciseForm, answer: new FormData(form).get('answer') }) }); toast(result.submission.correct ? '回答正确，已显示判定理由' : '答案需要调整，已显示原因和正确思路'); await load(); } catch (error) { toast(error.message, true); } finally { if (button) button.disabled = false; } }
 $$('.student-nav[data-student-view]').forEach((button) => button.addEventListener('click', () => { $$('.student-nav').forEach((item) => item.classList.toggle('active', item === button)); $$('.student-view').forEach((view) => view.classList.toggle('active', view.id === `student-view-${button.dataset.studentView}`)); }));
 $('#student-lesson-select').addEventListener('change', (event) => { studentState.lessonId = event.target.value; render(); });
+$('#student-course-select').addEventListener('change', async (event) => { try { await api('/api/student/course', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseId: event.target.value }) }); studentState.lessonId = ''; await load(); toast('课程已切换'); } catch (error) { toast(error.message, true); } });
 $('#attendance-button').addEventListener('click', async () => { try { await api('/api/student/attendance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lessonId: studentState.lessonId }) }); toast('签到成功'); await load(); } catch (error) { toast(error.message, true); } });
 $('#student-logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.reload(); });
 $('#student-courseware-close').addEventListener('click', () => $('#student-courseware-preview').close());
 $('#student-login-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await api('/api/auth/student', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); $('#student-login').close(); await load(); } catch (error) { toast(error.message, true); } });
-(async function boot() { const auth = await api('/api/auth/status'); if (auth.role === 'student') return load(); const classes = await api('/api/public/classes'); $('#student-class-select').innerHTML += classes.classes.map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join(''); $('#student-login').showModal(); })().catch((error) => toast(error.message, true));
+(async function boot() { const auth = await api('/api/auth/status'); if (auth.role === 'student') return load(); const [classes, catalog] = await Promise.all([api('/api/public/classes'), api('/api/public/courses')]); $('#student-class-select').innerHTML += classes.classes.map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join(''); $('#student-login-course-select').innerHTML += catalog.courses.map((item) => `<option value="${esc(item.id)}">${esc(item.label)}</option>`).join(''); $('#student-login-course-select').disabled = !catalog.courses.length; $('#student-login-form button').disabled = !catalog.courses.length; $('#student-login').showModal(); })().catch((error) => toast(error.message, true));

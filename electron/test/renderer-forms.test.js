@@ -45,3 +45,14 @@ test('question bank rerenders live exercise batches from the lesson event stream
   assert.match(source, /已完成的题目会立即显示在下方/);
   assert.match(source, /AI 正在生成第一批题目/);
 });
+
+test('student page selects an existing course and shows all course materials', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'student.html'), 'utf8');
+  const studentSource = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'student.js'), 'utf8');
+  assert.match(html, /id="student-login-course-select"/);
+  assert.match(html, /id="student-course-select"/);
+  assert.match(studentSource, /api\('\/api\/public\/courses'\)/);
+  assert.match(studentSource, /api\('\/api\/student\/course'/);
+  assert.match(studentSource, /data\.materials\.map/);
+  assert.doesNotMatch(studentSource, /data\.materials\.filter\(\(item\) => !lesson/);
+});
