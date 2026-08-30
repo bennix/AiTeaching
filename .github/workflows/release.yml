@@ -19,7 +19,7 @@ jobs:
         shell: bash
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            echo "release_tag=v$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+            echo "release_tag=v$(node -p 'require(\"./package.json\").version')" >> "$GITHUB_OUTPUT"
           else
             echo "release_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
           fi
@@ -92,15 +92,18 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
-      - name: Require Authenticode certificate
+      - name: Check Authenticode certificate
         shell: bash
         env:
           WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
           WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
         run: |
-          test -n "$WIN_CSC_LINK"
-          test -n "$WIN_CSC_KEY_PASSWORD"
-      - name: Build signed Windows installers
+          if [[ -n "$WIN_CSC_LINK" && -n "$WIN_CSC_KEY_PASSWORD" ]]; then
+            echo "Authenticode certificate configured; Windows installers will be signed."
+          else
+            echo "::warning::Authenticode certificate is not configured; Windows installers will be published unsigned."
+          fi
+      - name: Build Windows installers
         run: npm run dist:win
         env:
           CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
@@ -143,6 +146,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ needs.prepare.outputs.release_tag }}
+          name: AI 教学助手 ${{ needs.prepare.outputs.release_tag }}
           files: artifacts/*
           generate_release_notes: true
           fail_on_unmatched_files: true
