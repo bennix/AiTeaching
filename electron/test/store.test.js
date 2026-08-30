@@ -77,3 +77,20 @@ test('loading existing data keeps only the latest AI courseware for each lesson'
   assert.equal(fs.existsSync(oldPath), false);
   assert.equal(fs.existsSync(latestPath), true);
 });
+
+test('loading existing data repairs a completed plan incorrectly marked failed by later exercise generation', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-state-'));
+  const store = new JsonStore(runtimeDir);
+  store.state.lessons.push({
+    id: 'lesson-1', status: 'error', error: 'fetch failed', processingStage: 'exercises',
+    aiResult: '# 已完成的教学方案', updatedAt: '2026-08-30T00:00:00.000Z',
+  });
+  store.state.exercises.push({ id: 'exercise-1', lessonId: 'lesson-1', type: 'choice', question: '题目', answer: 'A' });
+  store.save();
+
+  const reloaded = new JsonStore(runtimeDir);
+  assert.equal(reloaded.state.lessons[0].status, 'done');
+  assert.equal(reloaded.state.lessons[0].error, '');
+  assert.match(reloaded.state.lessons[0].warning, /已保留/);
+  assert.equal(reloaded.state.lessons[0].planCompletedAt, '2026-08-30T00:00:00.000Z');
+});

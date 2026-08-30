@@ -28,3 +28,13 @@ test('teacher settings shows the ZenMux invite only when no API key is configure
   assert.match(html, /target="_blank" rel="noopener noreferrer"/);
   assert.match(source, /\$\('#api-key-invite'\)\.hidden = Boolean\(settings\.hasApiKey\);/);
 });
+
+test('exercise generator reports missing types and keeps its action in a separate footer', () => {
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'rich-text.css'), 'utf8');
+  assert.match(source, /function exerciseCoverage\(/);
+  assert.match(source, /当前题库还缺/);
+  assert.match(source, /class="exercise-generator-actions"/);
+  assert.match(source, /class="exercise-index">\$\{index \+ 1\}/);
+  assert.match(css, /\.exercise-generator-actions\s*\{/);
+  assert.match(css, /\.exercise-generator\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
+});

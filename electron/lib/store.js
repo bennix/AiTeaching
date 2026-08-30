@@ -46,7 +46,8 @@ class JsonStore {
     this.state = this.#load();
     const filenamesRepaired = this.#repairStoredFilenames();
     const coursewareDeduplicated = this.#deduplicateGeneratedCourseware();
-    if (filenamesRepaired || coursewareDeduplicated) this.save();
+    const lessonStatesRepaired = this.#repairCompletedLessonStates();
+    if (filenamesRepaired || coursewareDeduplicated || lessonStatesRepaired) this.save();
   }
 
   #loadOrCreateKey() {
@@ -109,6 +110,23 @@ class JsonStore {
       try { if (material.filePath && fs.existsSync(material.filePath)) fs.unlinkSync(material.filePath); } catch { /* Database cleanup should continue if an obsolete file is already gone. */ }
     }
     return true;
+  }
+
+  #repairCompletedLessonStates() {
+    let changed = false;
+    for (const lesson of this.state.lessons) {
+      const hasPlan = Boolean(String(lesson.aiResult || lesson.structuredNotes || '').trim());
+      const hasExercises = this.state.exercises.some((item) => item.lessonId === lesson.id && !item.targetStudentId);
+      if (lesson.status === 'error' && hasPlan && hasExercises) {
+        lesson.status = 'done';
+        lesson.processingStage = '';
+        lesson.planCompletedAt = lesson.planCompletedAt || lesson.updatedAt || new Date().toISOString();
+        lesson.warning = lesson.warning || '教学方案和已生成题目均已保留；此前后续 AI 请求中断，可在题库中继续补充。';
+        lesson.error = '';
+        changed = true;
+      }
+    }
+    return changed;
   }
 
   save() {

@@ -7,22 +7,43 @@ function endpoint(baseUrl, suffix) {
   return `${clean}${suffix}`;
 }
 
-async function requestJson(url, options, timeoutMs = 120000) {
-  const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { ...options, signal: controller.signal });
-    const raw = await response.text();
-    let payload;
-    try { payload = JSON.parse(raw); } catch { payload = null; }
-    if (!response.ok) {
-      const detail = payload?.error?.message || payload?.message || raw.slice(0, 300) || response.statusText;
-      throw new Error(`HTTP ${response.status}: ${detail}`);
-    }
-    return payload;
-  } finally {
-    clearTimeout(timer);
+function friendlyAiRequestError(error) {
+  if (error?.name === 'AbortError') return new Error('AI 服务请求超时，请稍后重试或检查 BaseURL 与网络连接');
+  if (/^HTTP \d+:/i.test(String(error?.message || ''))) return error;
+  if (error instanceof TypeError || /fetch failed|network|socket|ECONN/i.test(String(error?.message || ''))) {
+    const code = error?.cause?.code ? `（${error.cause.code}）` : '';
+    return new Error(`无法连接 AI 服务${code}，请检查 BaseURL、网络连接或服务状态`);
   }
+  return error instanceof Error ? error : new Error('AI 服务请求失败，请稍后重试');
+}
+
+async function requestJson(url, options, timeoutMs = 120000) {
+  let lastError;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const controller = new AbortController();
+    const timer = setTimeout(() => controller.abort(), timeoutMs);
+    try {
+      const response = await fetch(url, { ...options, signal: controller.signal });
+      const raw = await response.text();
+      let payload;
+      try { payload = JSON.parse(raw); } catch { payload = null; }
+      if (!response.ok) {
+        const detail = payload?.error?.message || payload?.message || raw.slice(0, 300) || response.statusText;
+        const requestError = new Error(`HTTP ${response.status}: ${detail}`);
+        requestError.retryable = response.status === 429 || response.status >= 500;
+        throw requestError;
+      }
+      return payload;
+    } catch (error) {
+      lastError = friendlyAiRequestError(error);
+      const retryable = error?.retryable || (error instanceof TypeError && error?.name !== 'AbortError');
+      if (!retryable || attempt === 2) throw lastError;
+      await new Promise((resolve) => setTimeout(resolve, 250 * (attempt + 1)));
+    } finally {
+      clearTimeout(timer);
+    }
+  }
+  throw lastError || new Error('AI 服务请求失败，请稍后重试');
 }
 
 function authHeaders(apiKey) {
@@ -86,6 +107,8 @@ async function requestChatStream(url, options, onDelta, timeoutMs = 180000) {
     }
     if (buffer) consumeLine(buffer);
     return cleanAiText(result);
+  } catch (error) {
+    throw friendlyAiRequestError(error);
   } finally {
     clearTimeout(timer);
   }
@@ -255,25 +278,33 @@ ${String(lesson.aiResult || lesson.rawText || '').slice(0, 12000)}`;
 
 async function generateExercisesForBlueprint(settings, lesson, blueprint) {
   const configs = normalizeExerciseBlueprint(blueprint);
-  const batches = await Promise.all(configs.map(async (item) => {
+  const batches = [];
+  for (const item of configs) {
     const collected = [];
     const seen = new Set();
     for (let attempt = 0; attempt < 3 && collected.length < item.count; attempt += 1) {
-      const generated = await generateExercises(settings, lesson, {
-        types: [item.type], count: item.count - collected.length, difficulty: item.difficulty,
-        excludeQuestions: collected.map((exercise) => exercise.question),
-      });
+      let generated;
+      try {
+        generated = await generateExercises(settings, lesson, {
+          types: [item.type], count: item.count - collected.length, difficulty: item.difficulty,
+          excludeQuestions: collected.map((exercise) => exercise.question),
+        });
+      } catch (error) {
+        error.partialExercises = [...batches.flat(), ...collected, ...(Array.isArray(error.partialExercises) ? error.partialExercises : [])];
+        throw error;
+      }
       for (const exercise of generated) {
         const key = exercise.question.trim();
         if (key && !seen.has(key)) { seen.add(key); collected.push(exercise); }
       }
     }
-    return collected.slice(0, item.count);
-  }));
+    batches.push(collected.slice(0, item.count));
+  }
   const shortages = configs.map((item, index) => ({ type: item.type, expected: item.count, actual: batches[index].length }))
     .filter((item) => item.actual < item.expected);
   if (shortages.length) {
     const error = new Error(`部分题型自动补生成后仍数量不足：${shortages.map((item) => `${item.type} 需要 ${item.expected}，实际 ${item.actual}`).join('；')}`);
+    error.kind = 'shortage';
     error.partialExercises = batches.flat();
     throw error;
   }

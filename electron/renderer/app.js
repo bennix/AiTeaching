@@ -20,10 +20,11 @@ async function api(url, options = {}) {
   return payload;
 }
 
-function toast(message, isError = false) {
+function toast(message, isError = false, isWarning = false) {
   const node = $('#toast');
   node.textContent = message;
   node.classList.toggle('error', isError);
+  node.classList.toggle('warning', !isError && isWarning);
   node.hidden = false;
   clearTimeout(toast.timer);
   toast.timer = setTimeout(() => { node.hidden = true; }, 3600);
@@ -207,6 +208,26 @@ function exerciseConfigRows(prefix, configured = []) {
   }).join('');
 }
 
+function exerciseCoverage(exercises, configured) {
+  const actual = new Map(exerciseTypes.map((type) => [type.value, 0]));
+  for (const exercise of exercises || []) {
+    const type = exercise.type === 'coding' ? 'application' : exercise.type;
+    if (actual.has(type)) actual.set(type, actual.get(type) + 1);
+  }
+  const expected = new Map((configured || []).map((item) => [item.type === 'coding' ? 'application' : item.type, Math.max(0, Number(item.count) || 0)]));
+  const rows = exerciseTypes.map((type) => ({
+    ...type,
+    expected: expected.has(type.value) ? expected.get(type.value) : type.defaultCount,
+    actual: actual.get(type.value) || 0,
+    difficulty: (configured || []).find((item) => (item.type === 'coding' ? 'application' : item.type) === type.value)?.difficulty || type.defaultDifficulty,
+  }));
+  return {
+    rows,
+    missing: rows.filter((item) => item.actual < item.expected),
+    missingConfigs: rows.map((item) => ({ type: item.value, count: Math.max(0, item.expected - item.actual), difficulty: item.difficulty })),
+  };
+}
+
 function readExerciseBlueprint(form, prefix) {
   const typeConfigs = exerciseTypes.map((type) => ({
     type: type.value,
@@ -226,11 +247,15 @@ function renderDialogContent() {
   else if (state.activeTab === 'exercises') {
     const exercises = lesson.exercises || [];
     const configured = lesson.exerciseOptions?.typeConfigs || [];
+    const coverage = exerciseCoverage(exercises, configured);
+    const formConfigs = coverage.missing.length ? coverage.missingConfigs : configured;
+    const coverageText = coverage.rows.map((item) => `${item.label} ${item.actual}/${item.expected}`).join(' · ');
     content.innerHTML = `<form id="exercise-generator-form" class="exercise-generator">
-      <div><strong>为当前章节继续出题</strong><small>每种题型分别设置数量与难度，合计不超过 30 道</small></div>
-      <div class="exercise-config-grid">${exerciseConfigRows('manual_', configured)}</div>
-      <button class="button primary" type="submit">确认参数并生成</button>
-    </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(exerciseTypeLabel(item.type))}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span><span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><strong>${index + 1}.</strong><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div><div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : '<div class="empty">暂无题目，请在上方选择参数后生成。</div>'}</div>`;
+      <div class="exercise-generator-heading"><strong>${coverage.missing.length ? '补齐当前章节题库' : '为当前章节继续出题'}</strong><small>${escapeHtml(coverageText)}</small></div>
+      ${coverage.missing.length ? `<div class="exercise-coverage-warning">当前题库还缺：${escapeHtml(coverage.missing.map((item) => `${item.label} ${item.expected - item.actual} 道`).join('、'))}。下方已自动填写缺少数量。</div>` : ''}
+      <div class="exercise-config-grid">${exerciseConfigRows('manual_', formConfigs)}</div>
+      <div class="exercise-generator-actions"><small>每种题型可分别设置数量与难度，单次合计不超过 30 道</small><button class="button primary" type="submit">${coverage.missing.length ? '补齐缺少题目' : '确认参数并生成'}</button></div>
+    </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(exerciseTypeLabel(item.type))}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span><span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><span class="exercise-index">${index + 1}</span><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div><div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : '<div class="empty">暂无题目，请在上方选择参数后生成。</div>'}</div>`;
     RichText.typeset(content);
     $('#exercise-generator-form').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -241,9 +266,9 @@ function renderDialogContent() {
         const typeConfigs = readExerciseBlueprint(form, 'manual_');
         const result = await api(`/api/lessons/${encodeURIComponent(lesson.id)}/generate-exercises`, {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ typeConfigs }),
+          body: JSON.stringify({ typeConfigs, preserveExerciseOptions: true }),
         });
-        toast(result.warning || `已生成 ${result.exercises.length} 道题`, Boolean(result.warning));
+        toast(result.warning || `已生成 ${result.exercises.length} 道题`, false, Boolean(result.warning));
         state.activeLesson = await api(`/api/lessons/${encodeURIComponent(lesson.id)}`);
         state.activeTab = 'exercises';
         renderDialogContent();

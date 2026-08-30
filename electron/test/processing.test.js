@@ -61,3 +61,39 @@ test('semester import persists a sequential queue and passes completed weeks int
   assert.match(weeklyPrompts[3], /第 1 周已整理方案/);
   assert.match(weeklyPrompts[3], /第 3 周已整理方案/);
 });
+
+test('exercise network failure preserves the completed plan and does not block later weeks', async (context) => {
+  let exerciseRequests = 0;
+  const aiServer = http.createServer(async (request, response) => {
+    const chunks = [];
+    for await (const chunk of request) chunks.push(chunk);
+    const body = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+    const prompt = body.messages?.at(-1)?.content || '';
+    if (prompt.includes('只返回 JSON 数组')) {
+      exerciseRequests += 1;
+      request.socket.destroy();
+      return;
+    }
+    const week = /第 (\d+)\/\d+ 教学周/.exec(prompt)?.[1] || '';
+    response.writeHead(200, { 'Content-Type': 'application/json' });
+    response.end(JSON.stringify({ choices: [{ message: { content: `# 第 ${week} 周已整理方案` } }] }));
+  });
+  await new Promise((resolve) => aiServer.listen(0, '127.0.0.1', resolve));
+  context.after(() => aiServer.close());
+
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-processing-network-'));
+  const store = new JsonStore(runtimeDir);
+  store.updateSettings({ baseUrl: `http://127.0.0.1:${aiServer.address().port}`, model: 'test-model', apiKey: 'test-key' });
+  const lessons = buildLessonRecords({
+    text: '# 第1周 导论\n内容一\n# 第2周 函数\n内容二', filename: '两周教案.md', scope: 'semester',
+    courseName: '数学', className: '一班', startDate: '2026-09-01', totalWeeks: 2,
+  });
+  store.addLessons(lessons);
+
+  await processLessons(store, lessons.map((item) => item.id));
+  assert.deepEqual(store.state.lessons.map((item) => item.status), ['done', 'done']);
+  assert.ok(store.state.lessons.every((item) => item.planCompletedAt));
+  assert.ok(store.state.lessons.every((item) => /题库生成暂时中断/.test(item.warning)));
+  assert.ok(store.state.lessons.every((item) => /无法连接 AI 服务/.test(item.warning)));
+  assert.equal(exerciseRequests, 6);
+});

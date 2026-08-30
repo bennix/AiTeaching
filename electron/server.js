@@ -77,7 +77,8 @@ function exerciseRecords(generated, lessonId, { targetStudentId = null, publishe
   return generated.map((item) => ({
     id: crypto.randomUUID(), lessonId, targetStudentId, published,
     type: ['choice', 'short_answer', 'application', 'coding'].includes(item.type) ? item.type : 'short_answer',
-    question: String(item.question || ''), answer: String(item.answer || ''), explanation: String(item.explanation || ''),
+    question: String(item.question || '').replace(/^\s*(?:第?\s*\d+\s*[题.、:：)]|[（(]\s*\d+\s*[）)])\s*/, ''),
+    answer: String(item.answer || ''), explanation: String(item.explanation || ''),
     difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
     knowledgePoint: String(item.knowledgePoint || ''), createdAt: new Date().toISOString(),
   })).filter((item) => item.question && item.answer);
@@ -264,7 +265,7 @@ async function processLessons(store, lessonIds, { onUpdate } = {}) {
         failed += 1;
         continue;
       }
-      store.updateLesson(id, { status: 'processing', processingStage: 'planning', error: '', warning: '', aiResult: '', structuredNotes: '' });
+      store.updateLesson(id, { status: 'processing', processingStage: 'planning', error: '', warning: '', aiResult: '', structuredNotes: '', planCompletedAt: '' });
       notify(store.getLesson(id));
       const context = buildTeachingContext(store, lesson);
       let lastSavedAt = 0;
@@ -279,7 +280,7 @@ async function processLessons(store, lessonIds, { onUpdate } = {}) {
         },
       });
       if (!store.getLesson(id)) continue;
-      store.updateLesson(id, { status: 'processing', processingStage: 'exercises', aiResult, structuredNotes: aiResult });
+      store.updateLesson(id, { status: 'processing', processingStage: 'exercises', aiResult, structuredNotes: aiResult, planCompletedAt: new Date().toISOString() });
       notify(store.getLesson(id));
       let exerciseWarning = '';
       if (!store.state.exercises.some((item) => item.lessonId === id && !item.targetStudentId)) {
@@ -287,9 +288,10 @@ async function processLessons(store, lessonIds, { onUpdate } = {}) {
         try {
           generated = await generateExercisesForBlueprint(settings, { ...lesson, aiResult }, lesson.exerciseOptions);
         } catch (error) {
-          if (!Array.isArray(error.partialExercises)) throw error;
           generated = Array.isArray(error.partialExercises) ? error.partialExercises : [];
-          exerciseWarning = `教学方案已完成；题库未完全达到设定数量。${error.message}。可在“题库”中继续补充。`;
+          exerciseWarning = error.kind === 'shortage'
+            ? `教学方案已完成；题库未完全达到设定数量。${error.message}。可在“题库”中继续补充。`
+            : `教学方案已完成；题库生成暂时中断。${error.message}。已保留本周方案，可在“题库”中重试。`;
         }
         if (!store.getLesson(id)) continue;
         const records = exerciseRecords(generated, id);
@@ -568,18 +570,28 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (requestedTotal > 30) throw new Error('当前章节题目总数不能超过 30 道');
         const normalized = normalizeExerciseBlueprint(blueprint);
         if (!normalized.length) throw new Error('请至少配置 1 道题');
-        store.updateLesson(lesson.id, { exerciseOptions: { mode: 'current', typeConfigs: normalized } });
+        if (!body.preserveExerciseOptions) store.updateLesson(lesson.id, { exerciseOptions: { mode: 'current', typeConfigs: normalized } });
         let generated;
         let warning = '';
         try {
           generated = await generateExercisesForBlueprint(store.getSettings({ includeKey: true }), lesson, blueprint);
         } catch (error) {
-          if (!Array.isArray(error.partialExercises)) throw error;
-          generated = error.partialExercises;
-          warning = `${error.message}；已保留成功生成的题目，可再次生成补充。`;
+          if (!lesson.aiResult && !lesson.structuredNotes) throw error;
+          generated = Array.isArray(error.partialExercises) ? error.partialExercises : [];
+          warning = `${error.message}；教学方案和已有题目不受影响，可再次生成补充。`;
         }
         const records = exerciseRecords(generated, lesson.id);
         if (records.length) store.addExercises(records);
+        if (lesson.aiResult || lesson.structuredNotes) {
+          store.updateLesson(lesson.id, {
+            status: 'done', processingStage: '', error: '', warning,
+            planCompletedAt: lesson.planCompletedAt || new Date().toISOString(),
+          });
+          const downstream = lessonsInSeries(store, lesson)
+            .filter((item) => Number(item.teachingWeek) > Number(lesson.teachingWeek) && ['blocked', 'queued'].includes(item.status))
+            .map((item) => item.id);
+          if (downstream.length) startProcessing(downstream);
+        }
         return sendJson(response, 201, { ok: true, exercises: records, warning });
       }
       const reportMatch = pathname.match(/^\/api\/students\/([^/]+)\/report$/);
@@ -809,7 +821,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
 
   activePort = await listen(server, preferredPort);
   if (store.getSettings().hasApiKey) {
-    const pendingIds = store.state.lessons.filter((item) => ['ready', 'queued', 'processing'].includes(item.status)).map((item) => item.id);
+    const pendingIds = store.state.lessons.filter((item) => ['ready', 'queued', 'processing', 'blocked'].includes(item.status)).map((item) => item.id);
     if (pendingIds.length) startProcessing(pendingIds);
   }
   return {
