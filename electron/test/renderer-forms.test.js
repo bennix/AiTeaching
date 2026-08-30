@@ -80,3 +80,14 @@ test('teacher can create a class from a course roster and link courseware to mul
   assert.match(source, /classNames', JSON\.stringify/);
   assert.match(source, /\/api\/lessons\/\$\{encodeURIComponent\(lessonId\)\}\/classes/);
 });
+
+test('teacher student directory separates classes and only renders the selected class roster', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  assert.match(html, /id="student-class-list"/);
+  assert.match(html, /id="active-student-class-name"/);
+  assert.match(html, /id="active-student-class-meta"/);
+  assert.match(source, /function studentClassGroups\(/);
+  assert.match(source, /state\.activeStudentClassKey/);
+  assert.match(source, /selectedGroup\.students\.map/);
+  assert.match(source, /data-student-class-key/);
+});

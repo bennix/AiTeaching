@@ -1,4 +1,4 @@
-const state = { data: null, analytics: null, analyticsFilters: {}, activeLesson: null, activeTab: 'ai', poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
+const state = { data: null, analytics: null, analyticsFilters: {}, activeLesson: null, activeTab: 'ai', activeStudentClassKey: '', poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
 const viewMeta = {
   lessons: ['教案与教学周', '管理单周教案与整学期教学安排'],
   import: ['导入教案', '支持 PDF、Word 和 Markdown 教案'],
@@ -50,17 +50,32 @@ function lessonClassLabel(lesson) {
   return [...new Set(names.map((item) => String(item || '').trim()).filter(Boolean))].join('、');
 }
 
-function establishedClasses(students = []) {
-  const classes = new Map();
+function studentClassGroups(students = []) {
+  const groups = new Map();
   for (const student of students) {
     const className = String(student.className || '').trim();
-    if (!className) continue;
     const courseName = String(student.courseName || '').trim();
     const key = `${courseName}\u241f${className}`;
-    if (!classes.has(key)) classes.set(key, { className, courseName, count: 0, term: student.term || '', courseCode: student.courseCode || '' });
-    classes.get(key).count += 1;
+    if (!groups.has(key)) groups.set(key, {
+      key,
+      className,
+      courseName,
+      term: student.term || '',
+      courseCode: student.courseCode || '',
+      students: [],
+    });
+    groups.get(key).students.push(student);
   }
-  return [...classes.values()].sort((left, right) => `${left.courseName}${left.className}`.localeCompare(`${right.courseName}${right.className}`, 'zh-CN'));
+  return [...groups.values()]
+    .map((group) => ({ ...group, count: group.students.length }))
+    .sort((left, right) => Number(!left.className) - Number(!right.className)
+      || `${left.courseName}${left.className}`.localeCompare(`${right.courseName}${right.className}`, 'zh-CN'));
+}
+
+function establishedClasses(students = []) {
+  return studentClassGroups(students)
+    .filter((group) => group.className)
+    .map(({ students: _students, ...group }) => group);
 }
 
 function renderImportClassPicker(students) {
@@ -134,15 +149,31 @@ function renderSettings() {
 
 function renderStudents() {
   const students = state.data.students || [];
+  const classGroups = studentClassGroups(students);
+  const selectedGroup = classGroups.find((group) => group.key === state.activeStudentClassKey) || classGroups[0] || null;
+  state.activeStudentClassKey = selectedGroup?.key || '';
   $('#student-total').textContent = students.length;
   $('#class-total').textContent = establishedClasses(students).length;
   $('#submission-total').textContent = state.data.submissionCount || 0;
   renderImportClassPicker(students);
-  $('#student-list').innerHTML = students.length ? students.map((student) => `
+  $('#student-class-list').innerHTML = classGroups.length ? classGroups.map((group) => `
+    <button class="student-class-item${group.key === state.activeStudentClassKey ? ' active' : ''}" type="button" data-student-class-key="${escapeHtml(group.key)}">
+      <span><strong>${escapeHtml(group.className || '未分班')}</strong><small>${escapeHtml(group.courseName || '未指定课程')}${group.term ? ` · ${escapeHtml(group.term)}` : ''}</small></span>
+      <b>${group.count}</b>
+    </button>`).join('') : '<div class="student-class-empty">还没有班级</div>';
+  $('#active-student-class-name').textContent = selectedGroup?.className || (selectedGroup ? '未分班学生' : '学生名单');
+  $('#active-student-class-meta').textContent = selectedGroup
+    ? `${selectedGroup.courseName || '未指定课程'} · ${selectedGroup.count} 名学生${selectedGroup.term ? ` · ${selectedGroup.term}` : ''}`
+    : '请先添加学生或导入选课单';
+  $('#student-list').innerHTML = selectedGroup ? selectedGroup.students.map((student) => `
     <article class="student-card">
       <div><h3>${escapeHtml(student.name)} <span class="badge">${escapeHtml(student.studentId)}</span></h3><p>${escapeHtml(student.courseName || '未指定课程')} · ${escapeHtml(student.className || '未分班')} · ${escapeHtml(student.email || '未填写邮箱')}</p></div>
       <div class="student-card-actions"><button class="button secondary" data-report-student="${escapeHtml(student.studentId)}">AI 报告</button><button class="button secondary" data-target-student="${escapeHtml(student.studentId)}">个性化习题</button><button class="button secondary" data-email-student="${escapeHtml(student.studentId)}">发送报告</button><button class="button danger" data-delete-student="${escapeHtml(student.studentId)}">删除</button></div>
     </article>`).join('') : '<div class="empty">还没有学生，请手动添加或导入名册。</div>';
+  $$('[data-student-class-key]').forEach((button) => button.addEventListener('click', () => {
+    state.activeStudentClassKey = button.dataset.studentClassKey;
+    renderStudents();
+  }));
   $$('[data-delete-student]').forEach((button) => button.addEventListener('click', async () => {
     if (!confirm(`确认删除学生 ${button.dataset.deleteStudent}？`)) return;
     try { await api(`/api/students/${encodeURIComponent(button.dataset.deleteStudent)}`, { method: 'DELETE' }); toast('学生已删除'); await refresh(); } catch (error) { toast(error.message, true); }
