@@ -332,6 +332,22 @@ class JsonStore {
     return record;
   }
 
+  upsertStudents(students) {
+    let added = 0;
+    let updated = 0;
+    for (const student of students) {
+      const studentId = String(student.studentId || '').trim();
+      const name = String(student.name || '').trim();
+      if (!studentId || !name) continue;
+      const existing = this.state.students.find((item) => item.studentId === studentId);
+      const record = { id: existing?.id || crypto.randomUUID(), ...existing, ...student, studentId, name, updatedAt: new Date().toISOString() };
+      if (existing) { Object.assign(existing, record); updated += 1; }
+      else { this.state.students.push(record); added += 1; }
+    }
+    this.save();
+    return { added, updated };
+  }
+
   deleteStudent(studentId) {
     this.state.students = this.state.students.filter((item) => item.studentId !== studentId);
     this.state.submissions = this.state.submissions.filter((item) => item.studentId !== studentId);

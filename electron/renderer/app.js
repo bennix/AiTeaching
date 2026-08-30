@@ -45,6 +45,40 @@ function statusLabel(status, stage, warning = '') {
   return { done: '✓ 方案与题库已完成', queued: '◷ 排队中', blocked: '! 等待前序周', error: '! 处理失败', ready: '等待 API Key' }[status] || status;
 }
 
+function lessonClassLabel(lesson) {
+  const names = Array.isArray(lesson.classNames) ? lesson.classNames : [lesson.className];
+  return [...new Set(names.map((item) => String(item || '').trim()).filter(Boolean))].join('、');
+}
+
+function establishedClasses(students = []) {
+  const classes = new Map();
+  for (const student of students) {
+    const className = String(student.className || '').trim();
+    if (!className) continue;
+    const courseName = String(student.courseName || '').trim();
+    const key = `${courseName}\u241f${className}`;
+    if (!classes.has(key)) classes.set(key, { className, courseName, count: 0, term: student.term || '', courseCode: student.courseCode || '' });
+    classes.get(key).count += 1;
+  }
+  return [...classes.values()].sort((left, right) => `${left.courseName}${left.className}`.localeCompare(`${right.courseName}${right.className}`, 'zh-CN'));
+}
+
+function renderImportClassPicker(students) {
+  const picker = $('#import-class-picker');
+  const selected = new Set($$('[name="linkedClass"]:checked').map((input) => input.value));
+  const classes = establishedClasses(students);
+  picker.innerHTML = classes.length ? classes.map((item) => `<label class="class-choice">
+    <input type="checkbox" name="linkedClass" value="${escapeHtml(item.className)}" ${selected.has(item.className) ? 'checked' : ''}>
+    <span><strong>${escapeHtml(item.className)}</strong><small>${escapeHtml(item.courseName || '未指定课程')} · ${item.count} 名学生${item.term ? ` · ${escapeHtml(item.term)}` : ''}</small></span>
+  </label>`).join('') : '<span class="muted">请先在“学生与班级”中导入选课单建立班级。</span>';
+  $$('[name="linkedClass"]').forEach((input) => input.addEventListener('change', () => {
+    if (!input.checked) return;
+    const item = classes.find((entry) => entry.className === input.value);
+    const courseInput = document.querySelector('#import-form [name="courseName"]');
+    if (item?.courseName && !courseInput.value.trim()) courseInput.value = item.courseName;
+  }));
+}
+
 function updateBatchToolbar() {
   $('#batch-toolbar').hidden = !state.batchMode;
   $('#batch-mode-button').textContent = state.batchMode ? '退出批量管理' : '批量管理';
@@ -63,7 +97,7 @@ function renderLessons() {
     <article class="lesson-row${state.batchMode ? ' batch-mode' : ''}" data-lesson-id="${escapeHtml(lesson.id)}">
       ${state.batchMode ? `<label class="lesson-select"><input type="checkbox" data-select-lesson="${escapeHtml(lesson.id)}" ${state.selectedLessonIds.has(lesson.id) ? 'checked' : ''} aria-label="选择第 ${escapeHtml(lesson.teachingWeek)} 周"></label>` : ''}
       <div class="week-badge">第 ${escapeHtml(lesson.teachingWeek)} 周</div>
-      <div><h3>${escapeHtml(lesson.title)}</h3><p>${escapeHtml(lesson.courseName || '未填写课程')}${lesson.className ? ` · ${escapeHtml(lesson.className)}` : ''} · ${escapeHtml(lesson.sourceFilename)}</p></div>
+      <div><h3>${escapeHtml(lesson.title)}</h3><p>${escapeHtml(lesson.courseName || '未填写课程')}${lessonClassLabel(lesson) ? ` · ${escapeHtml(lessonClassLabel(lesson))}` : ''} · ${escapeHtml(lesson.sourceFilename)}</p></div>
       <span class="status ${escapeHtml(lesson.status)}">${escapeHtml(statusLabel(lesson.status, lesson.processingStage, lesson.warning))}</span>
       <span class="date">${escapeHtml(lesson.date || '')}</span>
     </article>`).join('') : '<div class="empty">还没有教案。请先导入一个教学周或整学期教案。</div>';
@@ -101,8 +135,9 @@ function renderSettings() {
 function renderStudents() {
   const students = state.data.students || [];
   $('#student-total').textContent = students.length;
-  $('#class-total').textContent = new Set(students.map((item) => item.className).filter(Boolean)).size;
+  $('#class-total').textContent = establishedClasses(students).length;
   $('#submission-total').textContent = state.data.submissionCount || 0;
+  renderImportClassPicker(students);
   $('#student-list').innerHTML = students.length ? students.map((student) => `
     <article class="student-card">
       <div><h3>${escapeHtml(student.name)} <span class="badge">${escapeHtml(student.studentId)}</span></h3><p>${escapeHtml(student.courseName || '未指定课程')} · ${escapeHtml(student.className || '未分班')} · ${escapeHtml(student.email || '未填写邮箱')}</p></div>
@@ -272,7 +307,7 @@ async function openLesson(id) {
   state.activeTab = 'ai';
   $('#dialog-week').textContent = `第 ${state.activeLesson.teachingWeek}/${state.activeLesson.totalWeeks} 周`;
   $('#dialog-title').textContent = state.activeLesson.title;
-  $('#dialog-meta').textContent = `${state.activeLesson.courseName || '未填写课程'} · ${state.activeLesson.date || '未填写日期'} · ${state.activeLesson.sourceFilename}`;
+  $('#dialog-meta').textContent = `${state.activeLesson.courseName || '未填写课程'}${lessonClassLabel(state.activeLesson) ? ` · ${lessonClassLabel(state.activeLesson)}` : ''} · ${state.activeLesson.date || '未填写日期'} · ${state.activeLesson.sourceFilename}`;
   const notice = state.activeLesson.error || state.activeLesson.warning || '';
   $('#dialog-error').hidden = !notice;
   $('#dialog-error').textContent = notice;
@@ -502,6 +537,7 @@ $('#import-form').addEventListener('submit', async (event) => {
   button.textContent = '正在读取教案…';
   try {
     const form = new FormData(event.currentTarget);
+    form.set('classNames', JSON.stringify($$('[name="linkedClass"]:checked').map((input) => input.value)));
     const mode = form.get('scope') === 'semester' ? form.get('exerciseMode') : 'uniform';
     if (mode === 'per_week') {
       const totalWeeks = Number(form.get('totalWeeks')) || 1;
@@ -561,9 +597,38 @@ $('#student-form').addEventListener('submit', async (event) => {
 
 $('#roster-form').addEventListener('submit', async (event) => {
   event.preventDefault();
-  const form = new FormData(event.currentTarget);
-  try { const result = await api('/api/students/import', { method: 'POST', body: form }); toast(`已导入或更新 ${result.count} 名学生`); await refresh(); }
-  catch (error) { toast(error.message, true); }
+  const formElement = event.currentTarget;
+  const button = $('#roster-import-button');
+  const status = $('#roster-import-status');
+  const file = $('#roster-file').files[0];
+  if (!file) return;
+  button.disabled = true;
+  button.textContent = '正在识别选课单…';
+  status.hidden = false;
+  status.className = 'roster-import-status loading';
+  status.textContent = `正在读取 ${file.name}，识别课程、班级和学生名单…`;
+  try {
+    const result = await api('/api/students/import', { method: 'POST', body: new FormData(formElement) });
+    status.className = `roster-import-status success${result.warning ? ' warning' : ''}`;
+    status.innerHTML = `<strong>班级建立完成</strong><span>${escapeHtml(result.courseName || '未命名课程')} · ${escapeHtml(result.className || '未命名班级')}</span><small>共 ${result.count} 名学生：新增 ${result.added} 名，更新 ${result.updated} 名${result.term ? ` · ${escapeHtml(result.term)}` : ''}</small>${result.warning ? `<em>${escapeHtml(result.warning)}</em>` : ''}`;
+    toast(`已建立 ${result.className || '班级'}，导入 ${result.count} 名学生`, false, Boolean(result.warning));
+    $('#roster-file').value = '';
+    $('#roster-file-label').textContent = '继续选择另一份选课单';
+    await refresh();
+  } catch (error) {
+    status.className = 'roster-import-status error';
+    status.textContent = error.message;
+    toast(error.message, true);
+  } finally {
+    button.disabled = false;
+    button.textContent = '导入选课单并建立班级';
+  }
+});
+
+$('#roster-file').addEventListener('change', (event) => {
+  const file = event.target.files[0];
+  $('#roster-file-label').textContent = file?.name || '选择选课单，一键建立班级';
+  if (file) $('#roster-form').requestSubmit();
 });
 
 $('#class-material-form').addEventListener('submit', async (event) => {
@@ -617,24 +682,47 @@ async function previewCourseware(materialId) {
   } catch (error) { toast(error.message, true); }
 }
 
-$('#courseware-button').addEventListener('click', async (event) => {
+function openCoursewareClassDialog() {
   if (!state.activeLesson) return;
-  const button = event.currentTarget;
+  const selected = new Set((Array.isArray(state.activeLesson.classNames) ? state.activeLesson.classNames : [state.activeLesson.className]).filter(Boolean));
+  const classes = establishedClasses(state.data?.students || []);
+  $('#courseware-class-picker').innerHTML = classes.length ? classes.map((item) => `<label class="class-choice">
+    <input type="checkbox" name="coursewareClass" value="${escapeHtml(item.className)}" ${selected.has(item.className) ? 'checked' : ''}>
+    <span><strong>${escapeHtml(item.className)}</strong><small>${escapeHtml(item.courseName || '未指定课程')} · ${item.count} 名学生</small></span>
+  </label>`).join('') : '<div class="empty">还没有已建立班级。请先从“学生与班级”导入选课单。</div>';
+  if (!$('#courseware-class-dialog').open) $('#courseware-class-dialog').showModal();
+}
+
+$('#courseware-button').addEventListener('click', openCoursewareClassDialog);
+$('#courseware-class-close').addEventListener('click', () => $('#courseware-class-dialog').close());
+$('#courseware-class-form').addEventListener('submit', async (event) => {
+  event.preventDefault();
+  if (!state.activeLesson) return;
+  const button = $('#courseware-generate-button');
   const lessonId = state.activeLesson.id;
   button.disabled = true;
-  button.textContent = '正在生成课件…';
+  button.textContent = '正在保存并生成课件…';
   try {
+    const classNames = $$('[name="coursewareClass"]:checked').map((input) => input.value);
+    await api(`/api/lessons/${encodeURIComponent(lessonId)}/classes`, {
+      method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ classNames }),
+    });
     const result = await api(`/api/lessons/${encodeURIComponent(lessonId)}/courseware`, { method: 'POST' });
     state.activeLesson = await api(`/api/lessons/${encodeURIComponent(lessonId)}`);
+    const listItem = state.data?.lessons?.find((item) => item.id === lessonId);
+    if (listItem) Object.assign(listItem, { classNames: state.activeLesson.classNames, className: state.activeLesson.className });
     state.activeTab = 'materials';
     $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === 'materials'));
     renderDialogContent();
+    renderLessons();
+    $('#courseware-class-dialog').close();
     toast(result.replaced ? 'AI 课件已重新生成并替换旧版本' : 'AI 课件已生成');
     await previewCourseware(result.material.id);
   } catch (error) { toast(error.message, true); }
   finally {
     button.disabled = false;
-    button.textContent = state.activeLesson?.materials?.some((item) => item.type === 'ai_generated') ? '重新生成 AI 课件' : '生成 AI 课件';
+    button.textContent = '保存班级并生成 AI 课件';
+    $('#courseware-button').textContent = state.activeLesson?.materials?.some((item) => item.type === 'ai_generated') ? '重新生成 AI 课件' : '生成 AI 课件';
   }
 });
 async function sendLessonPackage(test, button) { if (!state.activeLesson) return; button.disabled = true; try { const result = await api(`/api/lessons/${encodeURIComponent(state.activeLesson.id)}/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ test }) }); toast(test ? '测试邮件已发送' : `已发送给 ${result.count} 名学生`); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } }

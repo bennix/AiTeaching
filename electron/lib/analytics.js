@@ -10,6 +10,11 @@ function unique(values) {
   return [...new Set(values.map(text).filter(Boolean))].sort((left, right) => left.localeCompare(right, 'zh-CN'));
 }
 
+function lessonClasses(lesson = {}) {
+  const values = Array.isArray(lesson.classNames) ? lesson.classNames : [lesson.className];
+  return unique(values);
+}
+
 function reportScopeKey({ courseName = '', className = '', lessonId = '' } = {}) {
   return [text(courseName), text(className), text(lessonId)].join('\u241f');
 }
@@ -37,7 +42,8 @@ function buildLearningAnalytics(state = {}, requestedFilters = {}) {
   const requestedLessonId = text(requestedFilters.lessonId);
 
   const courseLessons = completedLessons
-    .filter((lesson) => !courseName || text(lesson.courseName) === courseName)
+    .filter((lesson) => (!courseName || text(lesson.courseName) === courseName)
+      && (!className || !Array.isArray(lesson.classNames) || !lesson.classNames.length || lessonClasses(lesson).includes(className)))
     .sort((left, right) => (Number(left.teachingWeek) || 0) - (Number(right.teachingWeek) || 0)
       || text(left.date).localeCompare(text(right.date)));
   const lessonId = requestedLessonId && courseLessons.some((lesson) => lesson.id === requestedLessonId) ? requestedLessonId : '';

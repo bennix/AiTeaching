@@ -13,7 +13,7 @@ function handlerSource(selector) {
 }
 
 test('async teacher forms retain their form reference across await', () => {
-  for (const selector of ['settings-form', 'password-form', 'mail-form', 'student-form', 'class-material-form']) {
+  for (const selector of ['settings-form', 'password-form', 'mail-form', 'student-form', 'roster-form', 'class-material-form']) {
     const handler = handlerSource(selector);
     assert.match(handler, /const formElement = event\.currentTarget;/, `${selector} must capture the form before awaiting`);
     const afterAwait = handler.slice(handler.indexOf('await '));
@@ -68,4 +68,15 @@ test('teacher analytics view exposes filters, charts, student detail and AI repo
   assert.match(source, /function renderTrendChart/);
   assert.match(source, /function renderKnowledgeChart/);
   assert.match(source, /RichText\.render\(\$\('#analytics-report-content'\)/);
+});
+
+test('teacher can create a class from a course roster and link courseware to multiple classes', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  assert.match(html, /id="roster-file"[^>]*accept="\.csv,\.xlsx"/);
+  assert.match(html, /用选课单建立班级/);
+  assert.match(html, /id="import-class-picker"/);
+  assert.match(html, /id="courseware-class-dialog"/);
+  assert.match(source, /\$\('#roster-form'\)\.requestSubmit\(\)/);
+  assert.match(source, /classNames', JSON\.stringify/);
+  assert.match(source, /\/api\/lessons\/\$\{encodeURIComponent\(lessonId\)\}\/classes/);
 });

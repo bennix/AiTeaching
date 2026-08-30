@@ -1,6 +1,6 @@
 {
   "name": "ai-aid-teaching-electron",
-  "version": "2.1.0",
+  "version": "2.1.1",
   "description": "纯 Electron/JavaScript 的 AI 教学周教案助手，内置局域网服务",
   "desktopName": "ai-aid-teaching",
   "author": "AIAidTeaching",

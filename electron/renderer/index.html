@@ -60,11 +60,15 @@
             </div>
             <div class="form-grid">
               <label><span>课程名称</span><input name="courseName" required placeholder="例如：高一数学 / 大学英语 / 程序设计"></label>
-              <label><span>班级（可选）</span><input name="className" placeholder="例如：计算机 2026-1 班"></label>
+              <label><span>临时班级（可选）</span><input name="className" placeholder="没有现成班级时可手动填写"></label>
               <label><span id="date-label">上课日期</span><input type="date" name="startDate" required></label>
               <label id="week-number-field"><span>教学周</span><input type="number" name="weekNumber" min="1" max="40" value="1"></label>
               <label id="total-weeks-field" hidden><span>本学期教学周数</span><input type="number" name="totalWeeks" min="1" max="40" value="16"></label>
             </div>
+            <section class="class-assignment">
+              <div><h3>关联已建立班级</h3><p>可同时选择多个班级；生成的教学方案、题库和课件会对所选班级生效。</p></div>
+              <div id="import-class-picker" class="class-picker"><span class="muted">请先在“学生与班级”中导入选课单建立班级。</span></div>
+            </section>
             <label class="file-drop"><input id="lesson-file" type="file" name="lessonFile" accept=".pdf,.docx,.md,.markdown" required><span class="file-icon">＋</span><strong id="file-label">选择教案文件</strong><small>PDF / DOCX / MD，最大 30 MB</small></label>
             <div class="notice"><strong>处理方式：</strong><span id="scope-help">文件将保存为一个教学周；若已配置 API Key，会自动生成教学周方案。</span></div>
             <section class="exercise-setup">
@@ -92,11 +96,12 @@
               <button class="button primary" type="submit">保存学生</button>
             </form>
             <hr class="divider">
-            <form id="roster-form" class="stack compact">
-              <div><h2>批量导入名册</h2><p class="muted">支持 CSV / XLS / XLSX，中英文字段名均可</p></div>
-              <input type="file" name="rosterFile" accept=".csv,.xlsx" required>
-              <div class="form-grid"><label><span>统一指定课程（可选）</span><input name="courseName"></label><label><span>统一指定班级（可选）</span><input name="className"></label></div>
-              <button class="button secondary" type="submit">导入名册</button>
+            <form id="roster-form" class="stack compact roster-form">
+              <div><h2>用选课单建立班级</h2><p class="muted">自动识别课程代码、课程名称、学期、学号、姓名、专业、院系和性别。</p></div>
+              <label class="file-drop roster-drop"><input id="roster-file" type="file" name="rosterFile" accept=".csv,.xlsx" required><span class="file-icon">⇧</span><strong id="roster-file-label">选择选课单，一键建立班级</strong><small>支持学校上课点名表 XLSX，也兼容标准 CSV 名册</small></label>
+              <div id="roster-import-status" class="roster-import-status" hidden></div>
+              <details class="advanced-import"><summary>高级设置：手动覆盖识别结果</summary><div class="form-grid"><label><span>课程名称（可选）</span><input name="courseName" placeholder="默认从表格自动识别"></label><label><span>班级名称（可选）</span><input name="className" placeholder="默认使用教学班课程代码"></label></div></details>
+              <button id="roster-import-button" class="button secondary" type="submit">导入选课单并建立班级</button>
             </form>
             <hr class="divider">
             <form id="class-material-form" class="stack compact">
@@ -203,6 +208,15 @@
   <dialog id="courseware-preview-dialog">
     <div class="dialog-heading"><div><span class="badge">Markdown · LaTeX</span><h2 id="courseware-preview-title">课件预览</h2><p>教师端预览效果与学生端一致</p></div><button id="courseware-preview-close" class="icon-button">×</button></div>
     <div id="courseware-preview-content" class="document-content markdown-body"></div>
+  </dialog>
+
+  <dialog id="courseware-class-dialog" class="courseware-class-dialog">
+    <div class="dialog-heading"><div><span class="badge">班级关联</span><h2>选择课件适用班级</h2><p>可以同时关联多个已通过选课单建立的班级。</p></div><button id="courseware-class-close" class="icon-button" type="button">×</button></div>
+    <form id="courseware-class-form" class="stack courseware-class-form">
+      <div id="courseware-class-picker" class="class-picker"></div>
+      <div class="notice">保存后，本周教学方案、题库和课件会同时对所选班级可见。</div>
+      <button id="courseware-generate-button" class="button primary wide" type="submit">保存班级并生成 AI 课件</button>
+    </form>
   </dialog>
 
   <dialog id="admin-login" class="login-dialog">

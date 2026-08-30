@@ -215,7 +215,7 @@ async function generateWeeklyPlan(settings, lesson, { semesterContext = '', prev
   const prompt = `你是一名教学设计助手。请依据导入的教案，为第 ${lesson.teachingWeek}/${lesson.totalWeeks} 教学周整理一份可直接使用的教学周方案。
 
 课程：${lesson.courseName || '未填写'}
-班级：${lesson.className || '未填写'}
+班级：${(Array.isArray(lesson.classNames) ? lesson.classNames : [lesson.className]).filter(Boolean).join('、') || '未填写'}
 日期：${lesson.date || '未填写'}
 
 请使用 Markdown，严格包含：

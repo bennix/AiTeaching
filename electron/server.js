@@ -50,12 +50,27 @@ function studentCourseCatalog(store) {
   const courses = new Map();
   for (const lesson of store.state.lessons.filter((item) => item.status === 'done')) {
     const courseName = String(lesson.courseName || '').trim();
-    const className = String(lesson.className || '').trim();
     if (!courseName) continue;
-    const id = Buffer.from(JSON.stringify([courseName, className]), 'utf8').toString('base64url');
-    if (!courses.has(id)) courses.set(id, { id, courseName, className, label: className ? `${courseName} · ${className}` : courseName });
+    for (const className of lessonClassNames(lesson)) {
+      const id = Buffer.from(JSON.stringify([courseName, className]), 'utf8').toString('base64url');
+      if (!courses.has(id)) courses.set(id, { id, courseName, className, label: className ? `${courseName} · ${className}` : courseName });
+    }
   }
   return [...courses.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+}
+
+function lessonClassNames(lesson = {}) {
+  const names = Array.isArray(lesson.classNames) ? lesson.classNames : [lesson.className];
+  const unique = [...new Set(names.map((item) => String(item || '').trim()).filter(Boolean))];
+  return unique.length ? unique : [''];
+}
+
+function parseClassNames(value, fallback = '') {
+  let values = [];
+  try { values = JSON.parse(String(value || '[]')); } catch { values = String(value || '').split(/[、,，\n]/); }
+  if (!Array.isArray(values)) values = [];
+  const fallbackName = String(fallback || '').trim();
+  return [...new Set([...values, fallbackName].map((item) => String(item || '').trim()).filter(Boolean))];
 }
 
 function resolveStudentCourse(store, student, courseId = '') {
@@ -73,16 +88,16 @@ function visibleLessonsForStudent(store, student, course = null) {
   if (course) {
     return store.state.lessons.filter((lesson) => lesson.status === 'done'
       && lesson.courseName === course.courseName
-      && String(lesson.className || '') === course.className);
+      && lessonClassNames(lesson).includes(course.className));
   }
   return store.state.lessons.filter((lesson) => lesson.status === 'done'
     && (!student.courseName || !lesson.courseName || lesson.courseName === student.courseName)
-    && (!student.className || !lesson.className || lesson.className === student.className));
+    && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).includes(student.className)));
 }
 
 function studentsForLesson(store, lesson) {
   return store.state.students.filter((student) => (!student.courseName || !lesson.courseName || student.courseName === lesson.courseName)
-    && (!student.className || !lesson.className || student.className === lesson.className));
+    && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).includes(student.className)));
 }
 
 function htmlEscape(value) {
@@ -159,6 +174,84 @@ function parseCsv(text) {
   }
   rows.at(-1).push(value);
   return rows.filter((row) => row.some((item) => String(item).trim()));
+}
+
+function parseRosterRows(rows, overrides = {}) {
+  if (Array.isArray(rows) && rows.length && !Array.isArray(rows[0]) && Array.isArray(rows[0]?.data)) {
+    const rosterSheet = rows.find((sheet) => sheet.data.some((row) => Array.isArray(row)
+      && row.some((cell) => String(cell ?? '').trim() === '学号')
+      && row.some((cell) => String(cell ?? '').trim() === '姓名')));
+    rows = (rosterSheet || rows[0]).data;
+  }
+  if (!Array.isArray(rows) || !rows.length) throw new Error('选课单没有数据');
+  const aliases = {
+    studentId: ['学号', 'student_id', 'student id', 'id'],
+    name: ['姓名', 'name'],
+    major: ['专业', 'major'],
+    department: ['管理院系', '院系', 'department'],
+    gender: ['性别', 'gender'],
+    email: ['邮箱', 'email', 'mail'],
+    className: ['班级', '教学班', 'class', 'class_name'],
+    courseName: ['课程', '课程名称', 'course', 'course_name'],
+  };
+  const normalize = (value) => String(value ?? '').trim().toLowerCase();
+  let headerIndex = -1;
+  let positions = {};
+  for (let rowIndex = 0; rowIndex < Math.min(rows.length, 30); rowIndex += 1) {
+    const header = (rows[rowIndex] || []).map(normalize);
+    const indexes = Object.fromEntries(Object.entries(aliases).map(([key, names]) => [key, header.findIndex((item) => names.includes(item))]));
+    if (indexes.studentId >= 0 && indexes.name >= 0) { headerIndex = rowIndex; positions = indexes; break; }
+  }
+
+  const metadataText = rows.slice(0, headerIndex >= 0 ? headerIndex : Math.min(rows.length, 4))
+    .flat().map((item) => String(item ?? '').trim()).filter(Boolean).join('  ');
+  const match = (pattern) => metadataText.match(pattern)?.[1]?.trim() || '';
+  const courseCode = match(/(?:序号|课程代码)[：:]\s*([^\s]+)/i);
+  const detectedCourse = match(/课程名称[：:]\s*(.+?)(?=\s+(?:开课院系|授课教师|是否包含)[：:]|$)/i);
+  const department = match(/开课院系[：:]\s*(.+?)(?=\s+(?:授课教师|是否包含)[：:]|$)/i);
+  const teacher = match(/授课教师[：:]\s*(.+?)(?=\s+(?:是否包含)[：:]|$)/i);
+  const term = match(/上课点名表[（(]([^）)]+)[）)]/i);
+  const expectedCount = Number(match(/选课总人数[：:]\s*(\d+)/i)) || 0;
+  const courseName = String(overrides.courseName || detectedCourse || '').trim();
+  const className = String(overrides.className || (courseCode ? `教学班 ${courseCode}` : courseName ? `${courseName}教学班` : '')).trim();
+
+  if (headerIndex < 0) {
+    headerIndex = -1;
+    positions = { studentId: 0, name: 1, major: 2, gender: 3, email: 4, className: 5, courseName: 6, department: -1 };
+  }
+  const students = [];
+  const seen = new Set();
+  for (const row of rows.slice(headerIndex + 1)) {
+    const value = (key) => positions[key] >= 0 ? String(row?.[positions[key]] ?? '').trim() : '';
+    const studentId = value('studentId').replace(/^\*+/, '').trim();
+    const name = value('name');
+    if (!studentId || !name || /^(备注|带\*)/.test(studentId)) continue;
+    if (seen.has(studentId)) continue;
+    seen.add(studentId);
+    students.push({
+      studentId,
+      name,
+      major: value('major'),
+      department: value('department') || department,
+      gender: value('gender'),
+      email: value('email'),
+      className: className || value('className'),
+      courseName: courseName || value('courseName'),
+      courseCode,
+      term,
+    });
+  }
+  if (!students.length) throw new Error('没有识别到包含“学号”和“姓名”的学生记录');
+  return {
+    students,
+    courseName: courseName || students[0].courseName || '',
+    className: className || students[0].className || '',
+    courseCode,
+    department,
+    teacher,
+    term,
+    expectedCount,
+  };
 }
 
 async function sendConfiguredMail(store, { to, subject, text }) {
@@ -256,7 +349,7 @@ function exerciseBlueprintFromFields(fields, teachingWeek) {
 
 function lessonSeriesKey(lesson) {
   if (lesson.sourceScope === 'semester' && lesson.batchId) return `semester:${lesson.batchId}`;
-  return `course:${lesson.courseName || ''}\u0000${lesson.className || ''}`;
+  return `course:${lesson.courseName || ''}\u0000${lessonClassNames(lesson).filter(Boolean).sort().join('\u241f')}`;
 }
 
 function lessonsInSeries(store, lesson) {
@@ -588,8 +681,10 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (!file) throw new Error('请选择教案文件');
         const text = await extractDocumentText(file.filename, file.buffer);
         const storedName = `${Date.now()}-${file.filename.replace(/[^\p{L}\p{N}._-]+/gu, '_')}`;
-        const lessons = buildLessonRecords({ ...fields, filename: file.filename, text });
+        const classNames = parseClassNames(fields.classNames, fields.className);
+        const lessons = buildLessonRecords({ ...fields, className: classNames[0] || fields.className, filename: file.filename, text });
         for (const lesson of lessons) {
+          lesson.classNames = classNames;
           lesson.sourceStoredName = storedName;
           lesson.exerciseOptions = exerciseBlueprintFromFields(fields, lesson.teachingWeek);
           if (store.getSettings().hasApiKey) Object.assign(lesson, { status: 'queued', processingStage: 'queued' });
@@ -615,30 +710,35 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
       }
       if (request.method === 'POST' && pathname === '/api/students/import') {
         const { fields, file } = await readMultipart(request);
-        if (!file) throw new Error('请选择 CSV 或 XLSX 名册');
+        if (!file) throw new Error('请选择 CSV 或 XLSX 选课单');
         const extension = path.extname(file.filename).toLowerCase();
-        if (!['.csv', '.xlsx'].includes(extension)) throw new Error('名册仅支持 CSV 或 XLSX');
+        if (!['.csv', '.xlsx'].includes(extension)) throw new Error('选课单仅支持 CSV 或 XLSX');
         const rows = extension === '.csv' ? parseCsv(file.buffer.toString('utf8')) : await readXlsxFile(file.buffer);
-        if (!rows.length) throw new Error('名册没有数据');
-        const headerAliases = {
-          studentId: ['学号', 'student_id', 'student id', 'id'], name: ['姓名', 'name'], major: ['专业', 'major'],
-          gender: ['性别', 'gender'], email: ['邮箱', 'email', 'mail'], className: ['班级', 'class', 'class_name'], courseName: ['课程', 'course', 'course_name'],
-        };
-        const normalizedHeader = rows[0].map((item) => String(item).trim().toLowerCase());
-        const indexes = Object.fromEntries(Object.entries(headerAliases).map(([key, aliases]) => [key, normalizedHeader.findIndex((item) => aliases.includes(item))]));
-        const hasHeader = indexes.studentId >= 0 && indexes.name >= 0;
-        const positions = hasHeader ? indexes : { studentId: 0, name: 1, major: 2, gender: 3, email: 4, className: 5, courseName: 6 };
-        let count = 0;
-        for (const row of rows.slice(hasHeader ? 1 : 0)) {
-          const value = (key) => positions[key] >= 0 ? String(row[positions[key]] || '').trim() : '';
-          if (!value('studentId') || !value('name')) continue;
-          store.upsertStudent({
-            studentId: value('studentId'), name: value('name'), major: value('major'), gender: value('gender'), email: value('email'),
-            className: String(fields.className || '').trim() || value('className'), courseName: String(fields.courseName || '').trim() || value('courseName'),
-          });
-          count += 1;
-        }
-        return sendJson(response, 201, { ok: true, count });
+        const roster = parseRosterRows(rows, fields);
+        const imported = store.upsertStudents(roster.students);
+        const warning = roster.expectedCount && roster.expectedCount !== roster.students.length
+          ? `表头显示 ${roster.expectedCount} 人，实际识别 ${roster.students.length} 人，请检查选课单。`
+          : '';
+        return sendJson(response, 201, {
+          ok: true,
+          count: roster.students.length,
+          added: imported.added,
+          updated: imported.updated,
+          courseName: roster.courseName,
+          className: roster.className,
+          courseCode: roster.courseCode,
+          term: roster.term,
+          warning,
+        });
+      }
+      const lessonClassesMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/classes$/);
+      if (request.method === 'PUT' && lessonClassesMatch) {
+        const lesson = store.getLesson(lessonClassesMatch[1]);
+        if (!lesson) return sendJson(response, 404, { error: '未找到课次' });
+        const body = await readJson(request);
+        const classNames = parseClassNames(body.classNames);
+        const updated = store.updateLesson(lesson.id, { classNames, className: classNames[0] || '' });
+        return sendJson(response, 200, { ok: true, lesson: updated });
       }
       const notesMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/notes$/);
       if (request.method === 'PUT' && notesMatch) {
@@ -972,4 +1072,4 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
   };
 }
 
-module.exports = { buildStandaloneCoursewareHtml, buildTeachingContext, createLanServer, exerciseBlueprintFromFields, findLessonPrerequisite, getLanUrls, parseCsv, processLessons };
+module.exports = { buildStandaloneCoursewareHtml, buildTeachingContext, createLanServer, exerciseBlueprintFromFields, findLessonPrerequisite, getLanUrls, lessonClassNames, parseCsv, parseRosterRows, processLessons };
