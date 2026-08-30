@@ -36,8 +36,9 @@ function showView(name) {
   $('#page-subtitle').textContent = viewMeta[name][1];
 }
 
-function statusLabel(status, stage) {
+function statusLabel(status, stage, warning = '') {
   if (status === 'processing') return stage === 'exercises' ? '● 正在生成题库' : '● 正在流式整理';
+  if (status === 'done' && warning) return '✓ 方案完成 · 题库需补充';
   return { done: '✓ 方案与题库已完成', queued: '◷ 排队中', blocked: '! 等待前序周', error: '! 处理失败', ready: '等待 API Key' }[status] || status;
 }
 
@@ -60,7 +61,7 @@ function renderLessons() {
       ${state.batchMode ? `<label class="lesson-select"><input type="checkbox" data-select-lesson="${escapeHtml(lesson.id)}" ${state.selectedLessonIds.has(lesson.id) ? 'checked' : ''} aria-label="选择第 ${escapeHtml(lesson.teachingWeek)} 周"></label>` : ''}
       <div class="week-badge">第 ${escapeHtml(lesson.teachingWeek)} 周</div>
       <div><h3>${escapeHtml(lesson.title)}</h3><p>${escapeHtml(lesson.courseName || '未填写课程')}${lesson.className ? ` · ${escapeHtml(lesson.className)}` : ''} · ${escapeHtml(lesson.sourceFilename)}</p></div>
-      <span class="status ${escapeHtml(lesson.status)}">${escapeHtml(statusLabel(lesson.status, lesson.processingStage))}</span>
+      <span class="status ${escapeHtml(lesson.status)}">${escapeHtml(statusLabel(lesson.status, lesson.processingStage, lesson.warning))}</span>
       <span class="date">${escapeHtml(lesson.date || '')}</span>
     </article>`).join('') : '<div class="empty">还没有教案。请先导入一个教学周或整学期教案。</div>';
   $$('.lesson-row').forEach((row) => row.addEventListener('click', (event) => {
@@ -177,8 +178,11 @@ async function openLesson(id) {
   $('#dialog-week').textContent = `第 ${state.activeLesson.teachingWeek}/${state.activeLesson.totalWeeks} 周`;
   $('#dialog-title').textContent = state.activeLesson.title;
   $('#dialog-meta').textContent = `${state.activeLesson.courseName || '未填写课程'} · ${state.activeLesson.date || '未填写日期'} · ${state.activeLesson.sourceFilename}`;
-  $('#dialog-error').hidden = !state.activeLesson.error;
-  $('#dialog-error').textContent = state.activeLesson.error || '';
+  const notice = state.activeLesson.error || state.activeLesson.warning || '';
+  $('#dialog-error').hidden = !notice;
+  $('#dialog-error').textContent = notice;
+  $('#dialog-error').classList.toggle('warning', Boolean(state.activeLesson.warning && !state.activeLesson.error));
+  $('#courseware-button').textContent = state.activeLesson.materials?.some((item) => item.type === 'ai_generated') ? '重新生成 AI 课件' : '生成 AI 课件';
   $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === 'ai'));
   renderDialogContent();
   if (!$('#lesson-dialog').open) $('#lesson-dialog').showModal();
@@ -239,7 +243,7 @@ function renderDialogContent() {
           method: 'POST', headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ typeConfigs }),
         });
-        toast(`已生成 ${result.exercises.length} 道题`);
+        toast(result.warning || `已生成 ${result.exercises.length} 道题`, Boolean(result.warning));
         state.activeLesson = await api(`/api/lessons/${encodeURIComponent(lesson.id)}`);
         state.activeTab = 'exercises';
         renderDialogContent();
@@ -256,9 +260,10 @@ function renderDialogContent() {
     content.innerHTML = rows.length ? `<table class="attendance-table"><thead><tr><th>学号</th><th>状态</th><th>签到时间</th></tr></thead><tbody>${rows.map((item) => `<tr><td>${escapeHtml(item.studentId)}</td><td>到课</td><td>${escapeHtml(new Date(item.signedAt).toLocaleString())}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">本教学周暂无签到记录。</div>';
   } else if (state.activeTab === 'materials') {
     const materials = lesson.materials || [];
-    content.innerHTML = `<div class="exercise-list"><form id="lesson-material-form" class="inline"><input type="file" name="materialFile" required><button class="button primary">上传本周资料</button></form>${materials.length ? materials.map((item) => `<div class="student-card"><div><h3>${escapeHtml(item.filename)}</h3><p>${escapeHtml(item.type || '资料')}</p></div><button class="button danger" data-delete-material="${escapeHtml(item.id)}">删除</button></div>`).join('') : '<div class="empty">暂无课件资料。</div>'}</div>`;
+    content.innerHTML = `<div class="exercise-list"><form id="lesson-material-form" class="inline"><input type="file" name="materialFile" required><button class="button primary">上传本周资料</button></form>${materials.length ? materials.map((item) => `<div class="student-card"><div><h3>${escapeHtml(item.filename)}</h3><p>${item.type === 'ai_generated' ? 'AI 课件 · 支持 Markdown 与 LaTeX' : escapeHtml(item.type || '资料')}</p></div><div class="student-card-actions">${item.type === 'ai_generated' ? `<button class="button primary" data-preview-material="${escapeHtml(item.id)}">预览课件</button>` : ''}<a class="button secondary" href="/api/materials/${escapeHtml(item.id)}/download?download=1">下载</a><button class="button danger" data-delete-material="${escapeHtml(item.id)}">删除</button></div></div>`).join('') : '<div class="empty">暂无课件资料。</div>'}</div>`;
     $('#lesson-material-form').addEventListener('submit', async (event) => { event.preventDefault(); const form = new FormData(event.currentTarget); form.set('lessonId', lesson.id); try { await api('/api/materials', { method: 'POST', body: form }); toast('资料已上传'); await openLesson(lesson.id); } catch (error) { toast(error.message, true); } });
     $$('[data-delete-material]').forEach((button) => button.addEventListener('click', async () => { try { await api(`/api/materials/${button.dataset.deleteMaterial}`, { method: 'DELETE' }); await openLesson(lesson.id); } catch (error) { toast(error.message, true); } }));
+    $$('[data-preview-material]').forEach((button) => button.addEventListener('click', () => previewCourseware(button.dataset.previewMaterial)));
   } else if (lesson.status === 'queued') {
     content.innerHTML = '<div class="empty"><strong>本教学周已进入队列</strong><br><span class="muted">程序会先完成所有前序教学周的方案与题库，然后自动处理本周。刷新或重启程序不会丢失队列。</span></div>';
   } else if (lesson.status === 'processing') {
@@ -430,6 +435,7 @@ $('#models-button').addEventListener('click', async (event) => {
 
 $('#dialog-close').addEventListener('click', () => { closeLessonStream(); $('#lesson-dialog').close(); });
 $('#report-close').addEventListener('click', () => $('#report-dialog').close());
+$('#courseware-preview-close').addEventListener('click', () => $('#courseware-preview-dialog').close());
 $$('.tab').forEach((tab) => tab.addEventListener('click', () => {
   state.activeTab = tab.dataset.tab;
   $$('.tab').forEach((item) => item.classList.toggle('active', item === tab));
@@ -448,7 +454,35 @@ $('#process-button').addEventListener('click', async () => {
   } catch (error) { toast(error.message, true); }
 });
 
-$('#courseware-button').addEventListener('click', async (event) => { if (!state.activeLesson) return; event.target.disabled = true; try { await api(`/api/lessons/${encodeURIComponent(state.activeLesson.id)}/courseware`, { method: 'POST' }); toast('AI HTML 课件已生成'); await openLesson(state.activeLesson.id); } catch (error) { toast(error.message, true); } finally { event.target.disabled = false; } });
+async function previewCourseware(materialId) {
+  try {
+    const result = await api(`/api/materials/${encodeURIComponent(materialId)}/preview`);
+    $('#courseware-preview-title').textContent = result.filename || '课件预览';
+    RichText.render($('#courseware-preview-content'), result.markdown, '暂无课件内容。');
+    if (!$('#courseware-preview-dialog').open) $('#courseware-preview-dialog').showModal();
+  } catch (error) { toast(error.message, true); }
+}
+
+$('#courseware-button').addEventListener('click', async (event) => {
+  if (!state.activeLesson) return;
+  const button = event.currentTarget;
+  const lessonId = state.activeLesson.id;
+  button.disabled = true;
+  button.textContent = '正在生成课件…';
+  try {
+    const result = await api(`/api/lessons/${encodeURIComponent(lessonId)}/courseware`, { method: 'POST' });
+    state.activeLesson = await api(`/api/lessons/${encodeURIComponent(lessonId)}`);
+    state.activeTab = 'materials';
+    $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === 'materials'));
+    renderDialogContent();
+    toast(result.replaced ? 'AI 课件已重新生成并替换旧版本' : 'AI 课件已生成');
+    await previewCourseware(result.material.id);
+  } catch (error) { toast(error.message, true); }
+  finally {
+    button.disabled = false;
+    button.textContent = state.activeLesson?.materials?.some((item) => item.type === 'ai_generated') ? '重新生成 AI 课件' : '生成 AI 课件';
+  }
+});
 async function sendLessonPackage(test, button) { if (!state.activeLesson) return; button.disabled = true; try { const result = await api(`/api/lessons/${encodeURIComponent(state.activeLesson.id)}/email`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ test }) }); toast(test ? '测试邮件已发送' : `已发送给 ${result.count} 名学生`); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } }
 $('#test-package-button').addEventListener('click', (event) => sendLessonPackage(true, event.target));
 $('#send-package-button').addEventListener('click', (event) => { if (confirm('确认把本周讲义和已发放习题发送给全班？')) sendLessonPackage(false, event.target); });

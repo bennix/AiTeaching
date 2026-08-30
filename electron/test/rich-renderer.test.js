@@ -14,6 +14,15 @@ test('teacher and student pages load the sanitized Markdown and LaTeX renderer',
   }
 });
 
+test('teacher and student pages expose courseware preview dialogs', () => {
+  const teacher = fs.readFileSync(path.join(renderer, 'index.html'), 'utf8');
+  const student = fs.readFileSync(path.join(renderer, 'student.html'), 'utf8');
+  assert.match(teacher, /id="courseware-preview-dialog"/);
+  assert.match(student, /id="student-courseware-preview"/);
+  assert.match(fs.readFileSync(path.join(renderer, 'app.js'), 'utf8'), /RichText\.render\(\$\('#courseware-preview-content'\)/);
+  assert.match(fs.readFileSync(path.join(renderer, 'student.js'), 'utf8'), /RichText\.render\(\$\('#student-courseware-content'\)/);
+});
+
 test('rich text renderer sanitizes before typesetting', () => {
   const source = fs.readFileSync(path.join(renderer, 'markdown.js'), 'utf8');
   assert.ok(source.indexOf('DOMPurify.sanitize') < source.indexOf('renderMathInElement'));

@@ -58,3 +58,22 @@ test('batch deletion removes only selected lessons and their dependent records',
   assert.equal(fs.existsSync(path.join(store.uploadDir, 'selected-source.md')), false);
   assert.equal(fs.existsSync(path.join(store.uploadDir, 'shared-source.md')), true);
 });
+
+test('loading existing data keeps only the latest AI courseware for each lesson', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-courseware-'));
+  const store = new JsonStore(runtimeDir);
+  const oldPath = path.join(store.uploadDir, 'old.html');
+  const latestPath = path.join(store.uploadDir, 'latest.html');
+  fs.writeFileSync(oldPath, 'old');
+  fs.writeFileSync(latestPath, 'latest');
+  store.state.materials.push(
+    { id: 'old', lessonId: 'lesson-1', type: 'ai_generated', filename: '旧课件.html', filePath: oldPath, createdAt: '2026-01-01T00:00:00.000Z' },
+    { id: 'latest', lessonId: 'lesson-1', type: 'ai_generated', filename: '新课件.html', filePath: latestPath, createdAt: '2026-01-02T00:00:00.000Z' },
+  );
+  store.save();
+
+  const reloaded = new JsonStore(runtimeDir);
+  assert.deepEqual(reloaded.state.materials.map((item) => item.id), ['latest']);
+  assert.equal(fs.existsSync(oldPath), false);
+  assert.equal(fs.existsSync(latestPath), true);
+});

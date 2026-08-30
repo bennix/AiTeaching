@@ -41,18 +41,35 @@ test('教师和学生通过同一局域网服务完成导入、签到和选择�
     { type: 'short_answer', count: 2, difficulty: 'medium' },
     { type: 'application', count: 1, difficulty: 'hard' },
   ]);
-  server.store.updateLesson(lessonId, { status: 'done', aiResult: '本周学习变量。' });
-  server.store.addExercises([{ id: crypto.randomUUID(), lessonId, published: true, targetStudentId: null, type: 'choice', question: 'Python 变量如何赋值？\nA. x = 1\nB. 1 = x\nC. var x\nD. let x', answer: 'A', difficulty: 'easy', knowledgePoint: '变量' }]);
+  server.store.updateLesson(lessonId, { status: 'done', aiResult: '本周学习变量与公式 $x=1$。' });
+  server.store.addExercises([{ id: crypto.randomUUID(), lessonId, published: true, targetStudentId: null, type: 'choice', question: 'Python 变量如何赋值？\nA. x = 1\nB. 1 = x\nC. var x\nD. let x', answer: 'A', explanation: '赋值语句把右侧数值保存到左侧变量。', difficulty: 'easy', knowledgePoint: '变量' }]);
+
+  const firstCourseware = await json(`${base}/api/lessons/${lessonId}/courseware`, { method: 'POST', headers: { Cookie: adminCookie } });
+  const firstPath = server.store.state.materials.find((item) => item.id === firstCourseware.body.material.id).filePath;
+  const secondCourseware = await json(`${base}/api/lessons/${lessonId}/courseware`, { method: 'POST', headers: { Cookie: adminCookie } });
+  assert.equal(secondCourseware.body.replaced, 1);
+  assert.equal(server.store.state.materials.filter((item) => item.lessonId === lessonId && item.type === 'ai_generated').length, 1);
+  assert.equal(fs.existsSync(firstPath), false);
+  const materialId = secondCourseware.body.material.id;
+  const teacherPreview = await json(`${base}/api/materials/${materialId}/preview`, { headers: { Cookie: adminCookie } });
+  assert.match(teacherPreview.body.markdown, /\$x=1\$/);
+  const teacherDownload = await fetch(`${base}/api/materials/${materialId}/download`, { headers: { Cookie: adminCookie } });
+  assert.match(teacherDownload.headers.get('content-type'), /text\/html/);
+  assert.match(await teacherDownload.text(), /RichText\.render/);
 
   const studentLogin = await json(`${base}/api/auth/student`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: 'S001', className: '一班' }) });
   const studentCookie = studentLogin.response.headers.get('set-cookie').split(';')[0];
   const studentState = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
   assert.equal(studentState.body.lessons.length, 1);
+  const studentPreview = await json(`${base}/api/student/material/${materialId}/preview`, { headers: { Cookie: studentCookie } });
+  assert.match(studentPreview.body.markdown, /\$x=1\$/);
   const exerciseId = studentState.body.exercises[0].id;
   const attendance = await json(`${base}/api/student/attendance`, { method: 'POST', headers: { Cookie: studentCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ lessonId }) });
   assert.equal(attendance.body.ok, true);
   const submission = await json(`${base}/api/student/submit`, { method: 'POST', headers: { Cookie: studentCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseId, answer: 'A' }) });
   assert.equal(submission.body.submission.correct, true);
+  assert.match(submission.body.submission.feedback, /判定理由/);
+  assert.match(submission.body.submission.feedback, /正确思路/);
 
   const deleted = await json(`${base}/api/lessons/batch-delete`, { method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ ids: [lessonId] }) });
   assert.equal(deleted.body.deleted, 1);

@@ -59,6 +59,30 @@ function htmlEscape(value) {
   return String(value || '').replace(/[&<>"']/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[char]));
 }
 
+function buildCoursewareMarkdown(lesson) {
+  const exercises = (lesson.exercises || []).filter((item) => !item.targetStudentId && item.published)
+    .map((item, index) => `### 练习 ${index + 1}\n\n${item.question}`)
+    .join('\n\n');
+  return `# ${lesson.title || `${lesson.courseName || '课程'} · 第 ${lesson.teachingWeek} 周`}\n\n> ${lesson.courseName || '课程'} · 第 ${lesson.teachingWeek}/${lesson.totalWeeks} 教学周${lesson.date ? ` · ${lesson.date}` : ''}\n\n${lesson.aiResult || lesson.structuredNotes || lesson.rawText || '暂无教学内容'}${exercises ? `\n\n## 课堂练习\n\n${exercises}` : ''}`;
+}
+
+function materialPreviewMarkdown(store, material) {
+  if (material.markdown) return material.markdown;
+  if (material.type !== 'ai_generated') return '';
+  const lesson = store.getLessonDetail(material.lessonId);
+  return lesson ? buildCoursewareMarkdown(lesson) : '';
+}
+
+function exerciseRecords(generated, lessonId, { targetStudentId = null, published = false } = {}) {
+  return generated.map((item) => ({
+    id: crypto.randomUUID(), lessonId, targetStudentId, published,
+    type: ['choice', 'short_answer', 'application', 'coding'].includes(item.type) ? item.type : 'short_answer',
+    question: String(item.question || ''), answer: String(item.answer || ''), explanation: String(item.explanation || ''),
+    difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
+    knowledgePoint: String(item.knowledgePoint || ''), createdAt: new Date().toISOString(),
+  })).filter((item) => item.question && item.answer);
+}
+
 function parseCsv(text) {
   const rows = [[]];
   let value = '';
@@ -217,7 +241,7 @@ async function processLessons(store, lessonIds, { onUpdate } = {}) {
   const notify = (lesson) => { try { onUpdate?.({ ...lesson }); } catch { /* A disconnected viewer must not stop processing. */ } };
   for (const lesson of lessons) {
     active.add(lesson.id);
-    store.updateLesson(lesson.id, { status: 'queued', processingStage: 'queued', error: '' });
+    store.updateLesson(lesson.id, { status: 'queued', processingStage: 'queued', error: '', warning: '' });
     notify(store.getLesson(lesson.id));
   }
 
@@ -240,7 +264,7 @@ async function processLessons(store, lessonIds, { onUpdate } = {}) {
         failed += 1;
         continue;
       }
-      store.updateLesson(id, { status: 'processing', processingStage: 'planning', error: '', aiResult: '', structuredNotes: '' });
+      store.updateLesson(id, { status: 'processing', processingStage: 'planning', error: '', warning: '', aiResult: '', structuredNotes: '' });
       notify(store.getLesson(id));
       const context = buildTeachingContext(store, lesson);
       let lastSavedAt = 0;
@@ -257,19 +281,22 @@ async function processLessons(store, lessonIds, { onUpdate } = {}) {
       if (!store.getLesson(id)) continue;
       store.updateLesson(id, { status: 'processing', processingStage: 'exercises', aiResult, structuredNotes: aiResult });
       notify(store.getLesson(id));
+      let exerciseWarning = '';
       if (!store.state.exercises.some((item) => item.lessonId === id && !item.targetStudentId)) {
-        const generated = await generateExercisesForBlueprint(settings, { ...lesson, aiResult }, lesson.exerciseOptions);
+        let generated = [];
+        try {
+          generated = await generateExercisesForBlueprint(settings, { ...lesson, aiResult }, lesson.exerciseOptions);
+        } catch (error) {
+          if (!Array.isArray(error.partialExercises)) throw error;
+          generated = Array.isArray(error.partialExercises) ? error.partialExercises : [];
+          exerciseWarning = `教学方案已完成；题库未完全达到设定数量。${error.message}。可在“题库”中继续补充。`;
+        }
         if (!store.getLesson(id)) continue;
-        store.addExercises(generated.map((item) => ({
-          id: crypto.randomUUID(), lessonId: id, targetStudentId: null, published: false,
-          type: ['choice', 'short_answer', 'application', 'coding'].includes(item.type) ? item.type : 'short_answer',
-          question: String(item.question || ''), answer: String(item.answer || ''),
-          difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
-          knowledgePoint: String(item.knowledgePoint || ''), createdAt: new Date().toISOString(),
-        })).filter((item) => item.question && item.answer));
+        const records = exerciseRecords(generated, id);
+        if (records.length) store.addExercises(records);
       }
       if (!store.getLesson(id)) continue;
-      store.updateLesson(id, { status: 'done', processingStage: '', aiResult, structuredNotes: aiResult });
+      store.updateLesson(id, { status: 'done', processingStage: '', aiResult, structuredNotes: aiResult, warning: exerciseWarning });
       notify(store.getLesson(id));
       processed += 1;
     } catch (error) {
@@ -313,6 +340,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
     processingStage: lesson.processingStage || '',
     aiResult: lesson.aiResult || '',
     error: lesson.error || '',
+    warning: lesson.warning || '',
     updatedAt: lesson.updatedAt,
   });
   const broadcastLesson = (lesson) => {
@@ -541,10 +569,18 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const normalized = normalizeExerciseBlueprint(blueprint);
         if (!normalized.length) throw new Error('请至少配置 1 道题');
         store.updateLesson(lesson.id, { exerciseOptions: { mode: 'current', typeConfigs: normalized } });
-        const generated = await generateExercisesForBlueprint(store.getSettings({ includeKey: true }), lesson, blueprint);
-        const records = generated.map((item) => ({ id: crypto.randomUUID(), lessonId: lesson.id, targetStudentId: null, published: false, type: item.type || 'short_answer', question: item.question, answer: item.answer, difficulty: item.difficulty || 'medium', knowledgePoint: item.knowledgePoint || '', createdAt: new Date().toISOString() }));
-        store.addExercises(records);
-        return sendJson(response, 201, { ok: true, exercises: records });
+        let generated;
+        let warning = '';
+        try {
+          generated = await generateExercisesForBlueprint(store.getSettings({ includeKey: true }), lesson, blueprint);
+        } catch (error) {
+          if (!Array.isArray(error.partialExercises)) throw error;
+          generated = error.partialExercises;
+          warning = `${error.message}；已保留成功生成的题目，可再次生成补充。`;
+        }
+        const records = exerciseRecords(generated, lesson.id);
+        if (records.length) store.addExercises(records);
+        return sendJson(response, 201, { ok: true, exercises: records, warning });
       }
       const reportMatch = pathname.match(/^\/api\/students\/([^/]+)\/report$/);
       if (request.method === 'POST' && reportMatch) {
@@ -569,7 +605,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const wrongExerciseIds = store.state.submissions.filter((item) => item.studentId === studentId && !item.correct).map((item) => item.exerciseId);
         const weakPoints = [...new Set(store.state.exercises.filter((item) => wrongExerciseIds.includes(item.id)).map((item) => item.knowledgePoint).filter(Boolean))].join('、');
         const generated = await generateExercises(store.getSettings({ includeKey: true }), lesson, { targetStudentId: studentId, weakPoints });
-        const records = generated.map((item) => ({ id: crypto.randomUUID(), lessonId: lesson.id, targetStudentId: studentId, published: true, type: item.type || 'short_answer', question: item.question, answer: item.answer, difficulty: item.difficulty || 'medium', knowledgePoint: item.knowledgePoint || '', createdAt: new Date().toISOString() }));
+        const records = exerciseRecords(generated, lesson.id, { targetStudentId: studentId, published: true });
         store.addExercises(records);
         return sendJson(response, 201, { ok: true, count: records.length });
       }
@@ -583,17 +619,42 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         await sendConfiguredMail(store, { to: student.email, subject: `${student.courseName || '课程'} 学习诊断 - ${student.name}`, text: report.markdown });
         return sendJson(response, 200, { ok: true });
       }
+      const materialPreviewMatch = pathname.match(/^\/api\/materials\/([^/]+)\/preview$/);
+      if (request.method === 'GET' && materialPreviewMatch) {
+        const material = store.state.materials.find((item) => item.id === materialPreviewMatch[1]);
+        if (!material) return sendJson(response, 404, { error: '课件不存在' });
+        const markdown = materialPreviewMarkdown(store, material);
+        if (!markdown) throw new Error('该资料不支持在线预览');
+        return sendJson(response, 200, { id: material.id, filename: material.filename, markdown });
+      }
+      const materialDownloadMatch = pathname.match(/^\/api\/materials\/([^/]+)\/download$/);
+      if (request.method === 'GET' && materialDownloadMatch) {
+        const material = store.state.materials.find((item) => item.id === materialDownloadMatch[1]);
+        if (!material || !fs.existsSync(material.filePath)) return sendJson(response, 404, { error: '课件文件不存在' });
+        response.writeHead(200, {
+          'Content-Type': path.extname(material.filename).toLowerCase() === '.html' ? 'text/html; charset=utf-8' : 'application/octet-stream',
+          'Content-Disposition': `${url.searchParams.get('download') === '1' ? 'attachment' : 'inline'}; filename*=UTF-8''${encodeURIComponent(material.filename)}`,
+        });
+        return fs.createReadStream(material.filePath).pipe(response);
+      }
       const coursewareMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/courseware$/);
       if (request.method === 'POST' && coursewareMatch) {
         const lesson = store.getLessonDetail(coursewareMatch[1]);
         if (!lesson) return sendJson(response, 404, { error: '未找到课次' });
         const filename = `第${lesson.teachingWeek}周_${String(lesson.title).replace(/[^\p{L}\p{N}_-]+/gu, '_')}.html`;
         const filePath = path.join(store.uploadDir, `${Date.now()}-${filename}`);
-        const exerciseHtml = lesson.exercises.map((item, index) => `<section><h3>练习 ${index + 1}</h3><pre>${htmlEscape(item.question)}</pre></section>`).join('');
-        fs.writeFileSync(filePath, `<!doctype html><html lang="zh-CN"><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(lesson.title)}</title><style>body{font:18px/1.8 system-ui;max-width:1000px;margin:auto;padding:5vw;color:#172033}header{padding:5vw;border-radius:24px;background:#17213a;color:white}main{padding:3vw}pre{white-space:pre-wrap;background:#f3f5fa;padding:18px;border-radius:12px}</style><header><small>第 ${lesson.teachingWeek} 教学周</small><h1>${htmlEscape(lesson.title)}</h1><p>${htmlEscape(lesson.courseName)}</p></header><main><pre>${htmlEscape(lesson.aiResult)}</pre>${exerciseHtml}</main></html>`, 'utf8');
-        const material = { id: crypto.randomUUID(), lessonId: lesson.id, type: 'ai_generated', filename, filePath, createdAt: new Date().toISOString() };
-        store.state.materials.push(material); store.save();
-        return sendJson(response, 201, { ok: true, material: { ...material, filePath: undefined } });
+        const markdown = buildCoursewareMarkdown(lesson);
+        const embeddedMarkdown = JSON.stringify(markdown).replace(/</g, '\\u003c');
+        fs.writeFileSync(filePath, `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><title>${htmlEscape(lesson.title)}</title><link rel="stylesheet" href="/vendor/katex/katex.min.css"><link rel="stylesheet" href="/rich-text.css"><style>body{font:17px/1.8 system-ui;max-width:1100px;margin:auto;padding:4vw;color:#172033;background:#f5f7fb}main{background:white;padding:clamp(24px,5vw,64px);border-radius:24px;box-shadow:0 18px 60px #17203312}</style></head><body><main id="courseware" class="markdown-body"></main><script src="/vendor/marked.umd.js"></script><script src="/vendor/purify.min.js"></script><script src="/vendor/katex/katex.min.js"></script><script src="/vendor/katex/auto-render.min.js"></script><script src="/markdown.js"></script><script>RichText.render(document.getElementById('courseware'),${embeddedMarkdown},'暂无课件内容');</script></body></html>`, 'utf8');
+        const previous = store.state.materials.filter((item) => item.lessonId === lesson.id && item.type === 'ai_generated');
+        const material = { id: crypto.randomUUID(), lessonId: lesson.id, type: 'ai_generated', filename, filePath, markdown, createdAt: new Date().toISOString() };
+        store.state.materials = store.state.materials.filter((item) => !(item.lessonId === lesson.id && item.type === 'ai_generated'));
+        store.state.materials.push(material);
+        store.save();
+        for (const obsolete of previous) {
+          try { if (obsolete.filePath && obsolete.filePath !== filePath && fs.existsSync(obsolete.filePath)) fs.unlinkSync(obsolete.filePath); } catch { /* The replacement is already saved; stale file cleanup is best effort. */ }
+        }
+        return sendJson(response, 201, { ok: true, material: { ...material, filePath: undefined }, replaced: previous.length });
       }
       const lessonEmailMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/email$/);
       if (request.method === 'POST' && lessonEmailMatch) {
@@ -629,13 +690,24 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         return sendJson(response, 200, { ok: true });
       }
 
-      const materialDownloadMatch = pathname.match(/^\/api\/student\/material\/([^/]+)\/download$/);
-      if (request.method === 'GET' && materialDownloadMatch) {
+      const studentMaterialPreviewMatch = pathname.match(/^\/api\/student\/material\/([^/]+)\/preview$/);
+      if (request.method === 'GET' && studentMaterialPreviewMatch) {
         const student = store.state.students.find((item) => item.studentId === session.studentId);
         const lessons = visibleLessonsForStudent(store, student);
         const lessonIds = new Set(lessons.map((item) => item.id));
-        const material = store.state.materials.find((item) => item.id === materialDownloadMatch[1] && lessonIds.has(item.lessonId))
-          || store.state.classMaterials.find((item) => item.id === materialDownloadMatch[1] && (!item.className || item.className === student.className) && (!item.courseName || item.courseName === student.courseName));
+        const material = store.state.materials.find((item) => item.id === studentMaterialPreviewMatch[1] && lessonIds.has(item.lessonId));
+        if (!material) return sendJson(response, 404, { error: '课件不存在或尚未发布' });
+        const markdown = materialPreviewMarkdown(store, material);
+        if (!markdown) throw new Error('该资料不支持在线预览');
+        return sendJson(response, 200, { id: material.id, filename: material.filename, markdown });
+      }
+      const studentMaterialDownloadMatch = pathname.match(/^\/api\/student\/material\/([^/]+)\/download$/);
+      if (request.method === 'GET' && studentMaterialDownloadMatch) {
+        const student = store.state.students.find((item) => item.studentId === session.studentId);
+        const lessons = visibleLessonsForStudent(store, student);
+        const lessonIds = new Set(lessons.map((item) => item.id));
+        const material = store.state.materials.find((item) => item.id === studentMaterialDownloadMatch[1] && lessonIds.has(item.lessonId))
+          || store.state.classMaterials.find((item) => item.id === studentMaterialDownloadMatch[1] && (!item.className || item.className === student.className) && (!item.courseName || item.courseName === student.courseName));
         if (!material || !fs.existsSync(material.filePath)) return sendJson(response, 404, { error: '资料不存在' });
         response.writeHead(200, {
           'Content-Type': 'application/octet-stream',
@@ -669,7 +741,12 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const existing = store.state.submissions.find((item) => item.studentId === session.studentId && item.exerciseId === exercise.id);
         if (existing) throw new Error('该题已经提交过');
         const result = await gradeAnswer(store.getSettings({ includeKey: true }), exercise, body.answer);
-        const submission = { id: crypto.randomUUID(), studentId: session.studentId, exerciseId: exercise.id, answer: String(body.answer || ''), correct: result.correct, feedback: result.feedback, submittedAt: new Date().toISOString() };
+        const submission = {
+          id: crypto.randomUUID(), studentId: session.studentId, exerciseId: exercise.id,
+          answer: String(body.answer || ''), correct: result.correct, feedback: result.feedback,
+          reason: result.reason || '', correctApproach: result.correctApproach || '', suggestion: result.suggestion || '',
+          submittedAt: new Date().toISOString(),
+        };
         store.addSubmission(submission);
         return sendJson(response, 201, { ok: true, submission });
       }

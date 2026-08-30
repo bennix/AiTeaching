@@ -206,7 +206,15 @@ function normalizeExerciseBlueprint({ typeConfigs } = {}) {
   }).filter((item) => item.count > 0);
 }
 
-async function generateExercises(settings, lesson, { targetStudentId = null, weakPoints = '', types, count, difficulty } = {}) {
+function normalizeGeneratedExerciseType(value) {
+  const text = String(value || '').trim().toLowerCase();
+  if (['choice', 'single_choice', 'multiple_choice', '选择题', '单选题', '多选题'].includes(text)) return 'choice';
+  if (['short_answer', 'short-answer', 'shortanswer', '简答题', '问答题'].includes(text)) return 'short_answer';
+  if (['application', 'practice', 'case_study', 'coding', '应用题', '实践题', '案例题', '计算题', '编程题'].includes(text)) return 'application';
+  return text;
+}
+
+async function generateExercises(settings, lesson, { targetStudentId = null, weakPoints = '', types, count, difficulty, excludeQuestions = [] } = {}) {
   const options = normalizeExerciseOptions({ types, count, difficulty });
   const typeLabel = { choice: '选择题', short_answer: '简答题', application: '实践/应用题' };
   const difficultyLabel = { easy: '简单', medium: '中等', hard: '困难', mixed: '由易到难的混合难度' };
@@ -217,10 +225,12 @@ async function generateExercises(settings, lesson, { targetStudentId = null, wea
 格式：[{
   "type":"choice|short_answer|application",
   "question":"题目；选择题须包含 A-D 四个选项",
-  "answer":"参考答案；选择题仅写字母",
+  "answer":"参考答案；选择题以正确选项字母开头",
+  "explanation":"说明为什么答案正确，并给出关键解题思路",
   "difficulty":"easy|medium|hard",
   "knowledgePoint":"知识点"
 }]
+${excludeQuestions.length ? `不得重复以下已生成题目：\n${excludeQuestions.map((item) => `- ${item}`).join('\n').slice(0, 6000)}` : ''}
 ${targetStudentId ? `这是给学生 ${targetStudentId} 的个性化练习，重点补强：${weakPoints || '近期薄弱知识点'}。` : ''}
 课程：${lesson.courseName || ''}，第 ${lesson.teachingWeek} 周
 教学内容：
@@ -231,42 +241,93 @@ ${String(lesson.aiResult || lesson.rawText || '').slice(0, 12000)}`;
   });
   const parsed = parseJsonLoose(payload?.choices?.[0]?.message?.content, []);
   if (!Array.isArray(parsed)) return [];
-  return parsed.filter((item) => item && options.types.includes(item.type) && item.question && item.answer).map((item) => ({
+  return parsed.map((item) => ({ ...item, type: normalizeGeneratedExerciseType(item?.type) }))
+    .filter((item) => item && options.types.includes(item.type) && item.question && item.answer).map((item) => ({
     ...item,
     type: item.type,
     difficulty: options.difficulty === 'mixed' && EXERCISE_DIFFICULTIES.includes(item.difficulty) ? item.difficulty : (options.difficulty === 'mixed' ? 'medium' : options.difficulty),
     question: String(item.question),
     answer: String(item.answer),
+    explanation: String(item.explanation || ''),
     knowledgePoint: String(item.knowledgePoint || ''),
   })).slice(0, options.count);
 }
 
 async function generateExercisesForBlueprint(settings, lesson, blueprint) {
   const configs = normalizeExerciseBlueprint(blueprint);
-  const batches = await Promise.all(configs.map((item) => generateExercises(settings, lesson, {
-    types: [item.type], count: item.count, difficulty: item.difficulty,
-  })));
-  for (let index = 0; index < configs.length; index += 1) {
-    if (batches[index].length !== configs[index].count) {
-      throw new Error(`AI 返回的${configs[index].type}题数量不足（需要 ${configs[index].count}，实际 ${batches[index].length}）`);
+  const batches = await Promise.all(configs.map(async (item) => {
+    const collected = [];
+    const seen = new Set();
+    for (let attempt = 0; attempt < 3 && collected.length < item.count; attempt += 1) {
+      const generated = await generateExercises(settings, lesson, {
+        types: [item.type], count: item.count - collected.length, difficulty: item.difficulty,
+        excludeQuestions: collected.map((exercise) => exercise.question),
+      });
+      for (const exercise of generated) {
+        const key = exercise.question.trim();
+        if (key && !seen.has(key)) { seen.add(key); collected.push(exercise); }
+      }
     }
+    return collected.slice(0, item.count);
+  }));
+  const shortages = configs.map((item, index) => ({ type: item.type, expected: item.count, actual: batches[index].length }))
+    .filter((item) => item.actual < item.expected);
+  if (shortages.length) {
+    const error = new Error(`部分题型自动补生成后仍数量不足：${shortages.map((item) => `${item.type} 需要 ${item.expected}，实际 ${item.actual}`).join('；')}`);
+    error.partialExercises = batches.flat();
+    throw error;
   }
   return batches.flat();
 }
 
 async function gradeAnswer(settings, exercise, answer) {
-  if (exercise.type === 'choice') {
-    const normalize = (value) => String(value || '').trim().toUpperCase().match(/[A-D]/)?.[0] || '';
-    const correct = normalize(answer) === normalize(exercise.answer);
-    return { correct, feedback: correct ? '回答正确。' : `回答不正确，参考答案为 ${exercise.answer}。` };
+  const normalizeChoice = (value) => String(value || '').trim().toUpperCase().match(/[A-D]/)?.[0] || '';
+  const isChoice = exercise.type === 'choice';
+  const deterministicCorrect = isChoice ? normalizeChoice(answer) === normalizeChoice(exercise.answer) : null;
+  const fallback = () => {
+    const correctAnswer = String(exercise.answer || '').trim();
+    const correct = Boolean(deterministicCorrect);
+    const reason = correct
+      ? '你的选择与参考答案一致，说明你识别出了题目的关键条件。'
+      : `你的选择是 ${normalizeChoice(answer) || '未识别'}，而参考答案是 ${normalizeChoice(exercise.answer) || correctAnswer}，两者不一致。`;
+    const correctApproach = String(exercise.explanation || '').trim() || `回到题干逐项核对条件，正确答案为 ${correctAnswer}。`;
+    return { correct, reason, correctApproach, feedback: `**判定理由：** ${reason}\n\n**正确思路：** ${correctApproach}` };
+  };
+
+  if (!settings.apiKey) {
+    if (isChoice) return fallback();
+    throw new Error('AI 判题需要教师先配置 API Key');
   }
-  const prompt = `请批改学生答案，只返回 JSON：{"correct":true或false,"feedback":"简短、具体、鼓励式反馈"}\n题目：${exercise.question}\n参考答案：${exercise.answer}\n学生答案：${answer}`;
-  const payload = await requestJson(endpoint(settings.baseUrl, '/chat/completions'), {
-    method: 'POST', headers: authHeaders(settings.apiKey),
-    body: JSON.stringify({ model: settings.gradingModel || settings.model, messages: [{ role: 'user', content: prompt }], max_tokens: 600 }),
-  });
-  const result = parseJsonLoose(payload?.choices?.[0]?.message?.content, {});
-  return { correct: Boolean(result.correct), feedback: String(result.feedback || '批改完成。') };
+
+  const lockedConclusion = isChoice ? `本题是选择题。程序已可靠比对选项，correct 必须为 ${deterministicCorrect ? 'true' : 'false'}，不得改变此结论。` : '';
+  const prompt = `你是一名严谨、友善的教师。请批改学生答案，只返回 JSON，不要代码围栏：
+{"correct":true或false,"reason":"为什么正确或错误，必须结合题目和学生答案","correctApproach":"正确答案或关键解题步骤","suggestion":"一句具体改进建议"}
+${lockedConclusion}
+题目：${exercise.question}
+参考答案：${exercise.answer}
+参考解析：${exercise.explanation || '未单独提供，请根据题目与参考答案解释'}
+学生答案：${answer}`;
+  try {
+    const payload = await requestJson(endpoint(settings.baseUrl, '/chat/completions'), {
+      method: 'POST', headers: authHeaders(settings.apiKey),
+      body: JSON.stringify({ model: settings.gradingModel || settings.model, messages: [{ role: 'user', content: prompt }], max_tokens: 900 }),
+    });
+    const result = parseJsonLoose(payload?.choices?.[0]?.message?.content, {});
+    if (!isChoice && typeof result.correct !== 'boolean') throw new Error('AI 判题返回格式无效');
+    const correct = isChoice ? deterministicCorrect : result.correct;
+    const reason = String(result.reason || result.feedback || '').trim();
+    const correctApproach = String(result.correctApproach || exercise.explanation || exercise.answer || '').trim();
+    const suggestion = String(result.suggestion || '').trim();
+    if (!reason || !correctApproach) {
+      if (isChoice) return fallback();
+      throw new Error('AI 判题没有返回完整理由');
+    }
+    const feedback = [`**判定理由：** ${reason}`, `**正确思路：** ${correctApproach}`, suggestion ? `**改进建议：** ${suggestion}` : ''].filter(Boolean).join('\n\n');
+    return { correct, reason, correctApproach, suggestion, feedback };
+  } catch (error) {
+    if (isChoice) return fallback();
+    throw error;
+  }
 }
 
 async function generateStudentReport(settings, student, records) {

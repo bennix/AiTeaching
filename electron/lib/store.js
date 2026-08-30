@@ -44,7 +44,9 @@ class JsonStore {
     fs.mkdirSync(this.uploadDir, { recursive: true });
     this.encryptionKey = this.#loadOrCreateKey();
     this.state = this.#load();
-    if (this.#repairStoredFilenames()) this.save();
+    const filenamesRepaired = this.#repairStoredFilenames();
+    const coursewareDeduplicated = this.#deduplicateGeneratedCourseware();
+    if (filenamesRepaired || coursewareDeduplicated) this.save();
   }
 
   #loadOrCreateKey() {
@@ -88,6 +90,25 @@ class JsonStore {
       if (filename !== material.filename) { material.filename = filename; changed = true; }
     }
     return changed;
+  }
+
+  #deduplicateGeneratedCourseware() {
+    const latestByLesson = new Map();
+    const duplicates = [];
+    for (const material of this.state.materials.filter((item) => item.type === 'ai_generated')) {
+      const existing = latestByLesson.get(material.lessonId);
+      if (!existing) { latestByLesson.set(material.lessonId, material); continue; }
+      const keepCurrent = String(material.createdAt || '').localeCompare(String(existing.createdAt || '')) >= 0;
+      duplicates.push(keepCurrent ? existing : material);
+      if (keepCurrent) latestByLesson.set(material.lessonId, material);
+    }
+    if (!duplicates.length) return false;
+    const duplicateIds = new Set(duplicates.map((item) => item.id));
+    this.state.materials = this.state.materials.filter((item) => !duplicateIds.has(item.id));
+    for (const material of duplicates) {
+      try { if (material.filePath && fs.existsSync(material.filePath)) fs.unlinkSync(material.filePath); } catch { /* Database cleanup should continue if an obsolete file is already gone. */ }
+    }
+    return true;
   }
 
   save() {
