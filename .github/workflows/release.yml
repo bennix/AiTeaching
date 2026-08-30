@@ -1,0 +1,148 @@
+name: Release installers
+
+on:
+  push:
+    tags: ['v*']
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  prepare:
+    runs-on: ubuntu-latest
+    outputs:
+      release_tag: ${{ steps.metadata.outputs.release_tag }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: metadata
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            echo "release_tag=v$(node -p \"require('./package.json').version\")" >> "$GITHUB_OUTPUT"
+          else
+            echo "release_tag=${GITHUB_REF_NAME}" >> "$GITHUB_OUTPUT"
+          fi
+
+  macos:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Require Apple signing secrets
+        shell: bash
+        env:
+          MAC_CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          MAC_CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          test -n "$MAC_CSC_LINK"
+          test -n "$MAC_CSC_KEY_PASSWORD"
+          test -n "$APPLE_ID"
+          test -n "$APPLE_APP_SPECIFIC_PASSWORD"
+          test -n "$APPLE_TEAM_ID"
+      - name: Build signed and notarized universal DMG
+        run: npm run dist:mac
+        env:
+          CSC_LINK: ${{ secrets.MAC_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.MAC_CSC_KEY_PASSWORD }}
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+      - name: Notarize and staple DMG container
+        env:
+          APPLE_ID: ${{ secrets.APPLE_ID }}
+          APPLE_APP_SPECIFIC_PASSWORD: ${{ secrets.APPLE_APP_SPECIFIC_PASSWORD }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+        run: |
+          xcrun notarytool submit release/*.dmg \
+            --apple-id "$APPLE_ID" \
+            --password "$APPLE_APP_SPECIFIC_PASSWORD" \
+            --team-id "$APPLE_TEAM_ID" \
+            --wait
+          xcrun stapler staple release/*.dmg
+      - name: Verify signature and notarization ticket
+        run: |
+          codesign --verify --deep --strict --verbose=2 "release/mac-universal/AI 教学助手.app"
+          codesign --verify --verbose=2 release/*.dmg
+          xcrun stapler validate "release/mac-universal/AI 教学助手.app"
+          xcrun stapler validate release/*.dmg
+          spctl --assess --verbose --type exec "release/mac-universal/AI 教学助手.app"
+          spctl --assess --verbose --type open --context context:primary-signature release/*.dmg
+      - uses: actions/upload-artifact@v4
+        with:
+          name: macos-installers
+          path: |
+            release/*.dmg
+            release/*.zip
+            release/*.yml
+
+  windows:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - name: Require Authenticode certificate
+        shell: bash
+        env:
+          WIN_CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          WIN_CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+        run: |
+          test -n "$WIN_CSC_LINK"
+          test -n "$WIN_CSC_KEY_PASSWORD"
+      - name: Build signed Windows installers
+        run: npm run dist:win
+        env:
+          CSC_LINK: ${{ secrets.WIN_CSC_LINK }}
+          CSC_KEY_PASSWORD: ${{ secrets.WIN_CSC_KEY_PASSWORD }}
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-installers
+          path: |
+            release/*.exe
+            release/*.yml
+
+  linux:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run dist:linux
+      - uses: actions/upload-artifact@v4
+        with:
+          name: linux-installers
+          path: |
+            release/*.AppImage
+            release/*.deb
+            release/*.rpm
+            release/*.yml
+
+  publish:
+    needs: [prepare, macos, windows, linux]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.prepare.outputs.release_tag }}
+          files: artifacts/*
+          generate_release_notes: true
+          fail_on_unmatched_files: true

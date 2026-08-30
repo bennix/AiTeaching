@@ -1,0 +1,108 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta name="theme-color" content="#101c36">
+  <title>AI 教学助手 — 从教案到完整教学闭环</title>
+  <meta name="description" content="纯 Electron 桌面教学平台。导入 PDF、Word 或 Markdown 教案，自动生成教学周方案、题库、课件、签到与个性化学习反馈。">
+  <meta property="og:title" content="AI 教学助手 — 从教案到完整教学闭环">
+  <meta property="og:description" content="一份教案，连接教师端、学生端和整个学期。支持 macOS、Windows 与 Linux。">
+  <meta property="og:type" content="website">
+  <meta property="og:image" content="https://bennix.github.io/AiTeaching/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
+  <meta name="twitter:image" content="https://bennix.github.io/AiTeaching/assets/og.png">
+  <link rel="icon" href="assets/icon.png">
+  <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+  <header class="site-header">
+    <a class="brand" href="#top" aria-label="AI 教学助手首页">
+      <img src="assets/icon.png" alt="">
+      <span>AI 教学助手</span>
+    </a>
+    <nav aria-label="主导航">
+      <a href="#features">功能</a>
+      <a href="#workflow">工作流</a>
+      <a href="#download">下载</a>
+      <a class="github-link" href="https://github.com/bennix/AiTeaching">GitHub</a>
+    </nav>
+  </header>
+
+  <main id="top">
+    <section class="hero">
+      <div class="hero-glow one"></div><div class="hero-glow two"></div>
+      <div class="hero-copy">
+        <div class="eyebrow"><span></span>为真实课堂设计的桌面 AI 工作台</div>
+        <h1>把一份教案，变成<br><em>一整个学期的教学闭环</em></h1>
+        <p>导入 PDF、Word 或 Markdown。AI 教学助手会按教学周组织内容，连接教师备课、题目发放、学生签到、AI 批改与个性化学习反馈。</p>
+        <div class="hero-actions">
+          <a class="button primary" href="https://github.com/bennix/AiTeaching/releases/latest">下载最新版</a>
+          <a class="button ghost" href="https://github.com/bennix/AiTeaching">查看源代码 <span>↗</span></a>
+        </div>
+        <div class="platforms" aria-label="支持平台">
+          <span>macOS</span><span>Windows</span><span>Ubuntu</span><span>Fedora / RHEL</span>
+        </div>
+      </div>
+      <div class="hero-visual">
+        <div class="window-bar"><i></i><i></i><i></i><span>AI 教学助手 · 教师端</span></div>
+        <img src="assets/app-preview.png" alt="AI 教学助手教师端界面预览">
+        <div class="floating-card week"><b>16</b><span>教学周自动拆分</span></div>
+        <div class="floating-card lan"><b>●</b><span>局域网学生端在线</span></div>
+      </div>
+    </section>
+
+    <section class="proof-strip" aria-label="产品特点">
+      <div><strong>纯 Electron</strong><span>无需 Python 运行时</span></div>
+      <div><strong>本地优先</strong><span>学生数据留在本机</span></div>
+      <div><strong>OpenAI 兼容</strong><span>BaseURL 与模型自由选择</span></div>
+      <div><strong>局域网服务</strong><span>学生无需安装客户端</span></div>
+    </section>
+
+    <section class="section" id="features">
+      <div class="section-heading"><span>一个应用，两个完整入口</span><h2>老师轻松管理，学生自然参与</h2><p>所有功能围绕真实教学节奏组织，不需要在多个零散工具之间来回切换。</p></div>
+      <div class="role-grid">
+        <article class="role-card teacher">
+          <div class="role-icon">教</div><span class="role-label">教师端</span>
+          <h3>从整学期规划到每周执行</h3>
+          <ul><li>单周 / 整学期教案导入与拆分</li><li>Markdown 与 LaTeX 教学内容渲染</li><li>按题型、题量、难度生成 AI 题库</li><li>学生名单、签到、诊断与邮件发送</li></ul>
+        </article>
+        <article class="role-card student">
+          <div class="role-icon">学</div><span class="role-label">学生端</span>
+          <h3>在浏览器中完成学习闭环</h3>
+          <ul><li>班级与学号登录，无需安装应用</li><li>按教学周查看讲义与课程资料</li><li>完整显示 Markdown 与 LaTeX 公式</li><li>签到、做题、AI 批改与学习诊断</li></ul>
+        </article>
+      </div>
+    </section>
+
+    <section class="section workflow-section" id="workflow">
+      <div class="section-heading left"><span>简单但完整</span><h2>四步跑通一周教学</h2></div>
+      <ol class="workflow">
+        <li><b>01</b><div><h3>导入教案</h3><p>接受 PDF、DOCX 与 Markdown，可指定一个教学周或整个学期。</p></div></li>
+        <li><b>02</b><div><h3>AI 整理</h3><p>按周生成目标、重点难点、教学流程、活动、练习与资源建议。</p></div></li>
+        <li><b>03</b><div><h3>教师审核发布</h3><p>老师预览、调整并发布题目和资料，始终保留最终决定权。</p></div></li>
+        <li><b>04</b><div><h3>学生学习反馈</h3><p>学生签到与作答，系统沉淀记录并形成个性化诊断。</p></div></li>
+      </ol>
+    </section>
+
+    <section class="section local-section">
+      <div class="local-copy"><span>Local-first</span><h2>课堂数据，不必离开你的电脑</h2><p>应用在本机启动 Node.js 局域网服务。学生通过同一网络中的浏览器进入，课程、名单、提交与签到保存在教师电脑；API Key 使用 AES-256-GCM 加密。</p><div class="local-pills"><i>0.0.0.0</i><i>Encrypted API Key</i><i>Offline Storage</i></div></div>
+      <div class="network-map"><div class="center-node"><img src="assets/icon.png" alt=""><span>教师电脑</span></div><div class="orbit o1"><i></i></div><div class="orbit o2"><i></i></div><span class="device d1">笔记本</span><span class="device d2">平板</span><span class="device d3">手机</span></div>
+    </section>
+
+    <section class="section download-section" id="download">
+      <div class="section-heading"><span>多平台原生安装包</span><h2>选择你的系统，开始教学</h2><p>正式版本通过 GitHub Releases 发布，macOS 版本签名并经 Apple 公证。</p></div>
+      <div class="download-grid">
+        <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark"></div><div><h3>macOS</h3><p>Universal DMG · Apple Silicon + Intel</p></div><b>↓</b></a>
+        <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark windows">⊞</div><div><h3>Windows</h3><p>签名 EXE · 安装版与便携版</p></div><b>↓</b></a>
+        <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark ubuntu">◉</div><div><h3>Ubuntu / Debian</h3><p>DEB · AppImage</p></div><b>↓</b></a>
+        <a href="https://github.com/bennix/AiTeaching/releases/latest" class="download-card"><div class="os-mark rpm">◆</div><div><h3>Fedora / RHEL</h3><p>RPM</p></div><b>↓</b></a>
+      </div>
+      <p class="open-source">开源发布 · 可审计 · 可自托管　<a href="https://github.com/bennix/AiTeaching">github.com/bennix/AiTeaching ↗</a></p>
+    </section>
+  </main>
+
+  <footer><div class="brand"><img src="assets/icon.png" alt=""><span>AI 教学助手</span></div><p>为教师节省重复工作，把时间还给真正的教学。</p><span>© <span id="year">2026</span> AIAidTeaching</span></footer>
+  <script src="script.js"></script>
+</body>
+</html>

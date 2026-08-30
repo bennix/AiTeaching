@@ -1,0 +1,36 @@
+.DS_Store
+node_modules/
+release/
+*.log
+
+# Local runtime data and uploaded teaching materials
+data/
+uploads/
+materials/
+exports/
+*.db
+
+# Legacy Python implementation is intentionally not published
+*.py
+*.pyc
+__pycache__/
+venv/
+requirements*.txt
+.requirements.sha256
+routes/
+services/
+models/
+templates/
+static/
+tools/
+docs/
+one_click_start.bat
+one_click_start.command
+start.command
+start.sh
+start_windows.bat
+
+# Generated intermediate assets
+build/AIAidTeaching.iconset/
+build/app-preview.png
+build/og-generated.png

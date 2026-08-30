@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <meta name="color-scheme" content="light">
+  <title>AI 教学助手</title>
+  <link rel="stylesheet" href="/styles.css">
+  <link rel="stylesheet" href="/extra.css">
+  <link rel="stylesheet" href="/vendor/katex/katex.min.css">
+  <link rel="stylesheet" href="/rich-text.css">
+</head>
+<body>
+  <div class="app-shell">
+    <aside class="sidebar">
+      <div class="brand">
+        <div class="brand-mark">AI</div>
+        <div><strong>AI 教学助手</strong><span>Electron 桌面版</span></div>
+      </div>
+      <nav>
+        <button class="nav-item active" data-view="lessons">教案与教学周</button>
+        <button class="nav-item" data-view="import">导入教案</button>
+        <button class="nav-item" data-view="students">学生与班级</button>
+        <button class="nav-item" data-view="settings">AI 设置</button>
+        <button class="nav-item" data-view="network">局域网服务</button>
+      </nav>
+      <a class="student-entry" href="/student.html" target="_blank">打开学生端 ↗</a>
+      <div class="sidebar-status"><span class="status-dot"></span><span>本地服务运行中</span></div>
+    </aside>
+
+    <main>
+      <header class="topbar">
+        <div><h1 id="page-title">教案与教学周</h1><p id="page-subtitle">管理单周教案与整学期教学安排</p></div>
+        <button id="refresh-button" class="button secondary">刷新</button>
+      </header>
+
+      <div id="toast" class="toast" hidden></div>
+
+      <section id="view-lessons" class="view active">
+        <div class="metrics">
+          <article><span>教学周记录</span><strong id="metric-total">0</strong></article>
+          <article><span>AI 已整理</span><strong id="metric-done">0</strong></article>
+          <article><span>处理中</span><strong id="metric-processing">0</strong></article>
+        </div>
+        <div class="panel">
+          <div class="panel-heading"><div><h2>教案列表</h2><p>整学期教案会按指定周数生成多条教学周记录</p></div><button class="button primary" data-go="import">导入新教案</button></div>
+          <div id="lesson-list" class="lesson-list"></div>
+        </div>
+      </section>
+
+      <section id="view-import" class="view">
+        <div class="panel form-panel">
+          <div class="panel-heading"><div><h2>导入教案</h2><p>支持 PDF、Word（DOCX）和 Markdown</p></div></div>
+          <form id="import-form">
+            <div class="scope-picker">
+              <label class="scope-card selected"><input type="radio" name="scope" value="week" checked><strong>单个教学周</strong><span>一个文件对应一个教学周</span></label>
+              <label class="scope-card"><input type="radio" name="scope" value="semester"><strong>整学期教案</strong><span>按指定教学周数自动拆分</span></label>
+            </div>
+            <div class="form-grid">
+              <label><span>课程名称</span><input name="courseName" required placeholder="例如：Python 程序设计"></label>
+              <label><span>班级（可选）</span><input name="className" placeholder="例如：计算机 2026-1 班"></label>
+              <label><span id="date-label">上课日期</span><input type="date" name="startDate" required></label>
+              <label id="week-number-field"><span>教学周</span><input type="number" name="weekNumber" min="1" max="40" value="1"></label>
+              <label id="total-weeks-field" hidden><span>本学期教学周数</span><input type="number" name="totalWeeks" min="1" max="40" value="16"></label>
+            </div>
+            <label class="file-drop"><input id="lesson-file" type="file" name="lessonFile" accept=".pdf,.docx,.md,.markdown" required><span class="file-icon">＋</span><strong id="file-label">选择教案文件</strong><small>PDF / DOCX / MD，最大 30 MB</small></label>
+            <div class="notice"><strong>处理方式：</strong><span id="scope-help">文件将保存为一个教学周；若已配置 API Key，会自动生成教学周方案。</span></div>
+            <button id="import-button" class="button primary wide" type="submit">导入并处理</button>
+          </form>
+        </div>
+      </section>
+
+      <section id="view-students" class="view">
+        <div class="metrics"><article><span>学生总数</span><strong id="student-total">0</strong></article><article><span>班级数</span><strong id="class-total">0</strong></article><article><span>作答记录</span><strong id="submission-total">0</strong></article></div>
+        <div class="student-grid">
+          <div class="panel">
+            <div class="panel-heading"><div><h2>学生名单</h2><p>可查看学生信息并生成学习诊断报告</p></div></div>
+            <div id="student-list" class="lesson-list"></div>
+          </div>
+          <div class="panel stack">
+            <div><h2>添加学生</h2><p class="muted">学号和姓名为必填项</p></div>
+            <form id="student-form" class="stack compact">
+              <div class="form-grid"><label><span>学号</span><input name="studentId" required></label><label><span>姓名</span><input name="name" required></label><label><span>课程</span><input name="courseName"></label><label><span>班级</span><input name="className"></label><label><span>邮箱</span><input name="email" type="email"></label><label><span>专业</span><input name="major"></label></div>
+              <button class="button primary" type="submit">保存学生</button>
+            </form>
+            <hr class="divider">
+            <form id="roster-form" class="stack compact">
+              <div><h2>批量导入名册</h2><p class="muted">支持 CSV / XLS / XLSX，中英文字段名均可</p></div>
+              <input type="file" name="rosterFile" accept=".csv,.xlsx" required>
+              <div class="form-grid"><label><span>统一指定课程（可选）</span><input name="courseName"></label><label><span>统一指定班级（可选）</span><input name="className"></label></div>
+              <button class="button secondary" type="submit">导入名册</button>
+            </form>
+            <hr class="divider">
+            <form id="class-material-form" class="stack compact">
+              <div><h2>班级资料库</h2><p class="muted">上传后，对应班级学生长期可见</p></div>
+              <input type="file" name="materialFile" required>
+              <div class="form-grid"><label><span>课程</span><input name="courseName"></label><label><span>班级</span><input name="className" required></label></div>
+              <button class="button secondary" type="submit">上传班级资料</button>
+              <div id="class-material-list"></div>
+            </form>
+          </div>
+        </div>
+      </section>
+
+      <section id="view-settings" class="view">
+        <div class="panel form-panel">
+          <div class="panel-heading"><div><h2>OpenAI 兼容 API</h2><p>可接入 ZenMux、OpenAI 或其他兼容服务</p></div></div>
+          <form id="settings-form" class="stack">
+            <label><span>BaseURL</span><input name="baseUrl" type="url" required placeholder="https://example.com/v1"><small>程序会自动请求 /chat/completions 和 /models</small></label>
+            <label><span>模型</span><div class="inline"><input name="model" list="model-options" required placeholder="输入或选择模型 ID"><button id="models-button" type="button" class="button secondary">获取模型列表</button></div><datalist id="model-options"></datalist></label>
+            <div class="form-grid"><label><span>判题模型</span><input name="gradingModel" list="model-options" placeholder="留空则使用主模型"></label><label><span>签到有效时长（分钟）</span><input name="attendanceTimeoutMinutes" type="number" min="1" value="1440"></label></div>
+            <label><span>API Key</span><input name="apiKey" type="password" autocomplete="new-password" placeholder="留空则保留当前 Key"><small id="key-status">尚未保存 API Key</small></label>
+            <div class="inline end"><button type="submit" class="button primary">保存设置</button><button id="test-button" type="button" class="button secondary">测试连接</button></div>
+          </form>
+          <hr class="divider">
+          <form id="password-form" class="stack compact">
+            <div><h2>教师登录密码</h2><p class="muted">首次使用默认密码 admin</p></div>
+            <div class="form-grid"><label><span>新密码</span><input name="password" type="password" minlength="4" required></label><label><span>确认密码</span><input name="confirm" type="password" minlength="4" required></label></div>
+            <div><button class="button secondary" type="submit">修改密码</button></div>
+          </form>
+          <hr class="divider">
+          <form id="mail-form" class="stack compact">
+            <div><h2>邮件发送</h2><p class="muted">用于学生报告和课次资料发送</p></div>
+            <div class="form-grid"><label><span>SMTP 主机</span><input name="host" placeholder="smtp.example.com"></label><label><span>端口</span><input name="port" type="number" value="465"></label><label><span>用户名</span><input name="username"></label><label><span>授权码 / 密码</span><input name="password" type="password" placeholder="留空保留当前值"></label><label><span>发件邮箱</span><input name="senderEmail" type="email"></label><label><span>发件人名称</span><input name="senderName" value="AI 教学助手"></label><label><span>安全模式</span><select name="security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></label><label><span>测试收件邮箱</span><input name="testRecipient" type="email"></label></div>
+            <div class="inline"><button class="button secondary" type="submit">保存邮箱设置</button><button id="test-mail-button" class="button secondary" type="button">测试邮件</button></div>
+          </form>
+        </div>
+      </section>
+
+      <section id="view-network" class="view">
+        <div class="panel">
+          <div class="panel-heading"><div><h2>局域网服务</h2><p>同一网络下的设备可通过下列地址打开</p></div><span class="badge success">运行中</span></div>
+          <div id="network-urls" class="network-list"></div>
+          <div class="notice"><strong>提示：</strong>请保持本程序运行，并确保系统防火墙允许该端口的入站连接。教案和 API 设置保存在当前电脑，不会自动上传到其他服务器。</div>
+        </div>
+      </section>
+    </main>
+  </div>
+
+  <dialog id="lesson-dialog">
+    <div class="dialog-heading"><div><span id="dialog-week" class="badge"></span><h2 id="dialog-title"></h2><p id="dialog-meta"></p></div><button id="dialog-close" class="icon-button">×</button></div>
+    <div id="dialog-error" class="error-box" hidden></div>
+    <div class="dialog-actions"><button id="process-button" class="button primary">AI 重新整理</button><button id="courseware-button" class="button secondary">生成 AI 课件</button><button id="test-package-button" class="button secondary">测试邮件</button><button id="send-package-button" class="button secondary">发送全班</button><button id="delete-button" class="button danger">删除</button></div>
+    <div class="tabs"><button class="tab active" data-tab="ai">AI 教学周方案</button><button class="tab" data-tab="exercises">题库</button><button class="tab" data-tab="materials">课件资料</button><button class="tab" data-tab="attendance">签到</button><button class="tab" data-tab="source">导入原文</button></div>
+    <div id="dialog-content" class="document-content markdown-body"></div>
+  </dialog>
+
+  <dialog id="report-dialog">
+    <div class="dialog-heading"><div><span class="badge">AI 学习诊断</span><h2 id="report-title">学生报告</h2></div><button id="report-close" class="icon-button">×</button></div>
+    <div id="report-content" class="document-content markdown-body"></div>
+  </dialog>
+
+  <dialog id="admin-login" class="login-dialog">
+    <div class="login-brand"><div class="brand-mark">AI</div><div><h2>教师端登录</h2><p>默认密码为 admin</p></div></div>
+    <form id="login-form" class="stack"><label><span>教师密码</span><input name="password" type="password" autofocus required></label><button class="button primary wide">进入教师端</button><a href="/student.html">我是学生，进入学生端 →</a></form>
+  </dialog>
+
+  <script src="/vendor/marked.umd.js"></script>
+  <script src="/vendor/purify.min.js"></script>
+  <script src="/vendor/katex/katex.min.js"></script>
+  <script src="/vendor/katex/auto-render.min.js"></script>
+  <script src="/markdown.js"></script>
+  <script src="/app.js"></script>
+</body>
+</html>

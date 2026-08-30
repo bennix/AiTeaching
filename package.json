@@ -1,0 +1,105 @@
+{
+  "name": "ai-aid-teaching-electron",
+  "version": "2.0.0",
+  "description": "纯 Electron/JavaScript 的 AI 教学周教案助手，内置局域网服务",
+  "author": "AIAidTeaching",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/bennix/AiTeaching.git"
+  },
+  "homepage": "https://bennix.github.io/AiTeaching/",
+  "bugs": "https://github.com/bennix/AiTeaching/issues",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "test": "node --test electron/test/*.test.js",
+    "pack": "electron-builder --dir",
+    "dist": "electron-builder",
+    "dist:mac": "electron-builder --mac dmg zip --universal",
+    "dist:win": "electron-builder --win nsis portable --x64",
+    "dist:linux": "electron-builder --linux AppImage deb rpm --x64"
+  },
+  "dependencies": {
+    "busboy": "^1.6.0",
+    "dompurify": "^3.4.14",
+    "katex": "^0.16.22",
+    "mammoth": "^1.10.0",
+    "marked": "^16.2.1",
+    "nodemailer": "^9.0.6",
+    "pdf-parse": "^1.1.1",
+    "read-excel-file": "^9.3.10"
+  },
+  "devDependencies": {
+    "electron": "^38.0.0",
+    "electron-builder": "^26.0.12"
+  },
+  "build": {
+    "appId": "cn.aiaidteaching.desktop",
+    "productName": "AI 教学助手",
+    "asar": true,
+    "files": [
+      "electron/**/*",
+      "package.json",
+      "node_modules/**/*"
+    ],
+    "directories": {
+      "output": "release"
+    },
+    "icon": "electron/assets/icon.png",
+    "artifactName": "AIAidTeaching-${version}-${os}-${arch}.${ext}",
+    "publish": {
+      "provider": "github",
+      "owner": "bennix",
+      "repo": "AiTeaching",
+      "releaseType": "release"
+    },
+    "mac": {
+      "category": "public.app-category.education",
+      "icon": "build/icon.icns",
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false,
+      "entitlements": "build/entitlements.mac.plist",
+      "entitlementsInherit": "build/entitlements.mac.plist",
+      "notarize": true,
+      "target": [
+        "dmg",
+        "zip"
+      ]
+    },
+    "win": {
+      "icon": "build/icon.ico",
+      "target": [
+        "nsis",
+        "portable"
+      ]
+    },
+    "linux": {
+      "category": "Education",
+      "icon": "build/icons",
+      "maintainer": "bennix",
+      "synopsis": "AI-powered teaching assistant for teachers and students",
+      "target": [
+        "AppImage",
+        "deb",
+        "rpm"
+      ]
+    },
+    "nsis": {
+      "artifactName": "AIAidTeaching-Setup-${version}-${arch}.${ext}",
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "AI 教学助手"
+    },
+    "portable": {
+      "artifactName": "AIAidTeaching-Portable-${version}-${arch}.${ext}"
+    },
+    "dmg": {
+      "title": "AI 教学助手 ${version}",
+      "backgroundColor": "#F4F7FB",
+      "sign": true
+    }
+  }
+}
