@@ -134,13 +134,56 @@ async function testConnection(settings) {
   return aiContentText(payload?.choices?.[0]?.message?.content) || '连接成功';
 }
 
-async function fetchModels(settings) {
+const MIN_TEACHING_MODEL_CONTEXT = 65536;
+const NON_CHAT_MODEL_ID = /(^|[/_.-])(embed(?:ding)?|rerank|image|imagen|video|speech|tts|transcri(?:be|ption)|whisper)([/_.-]|$)/i;
+
+function normalizeModalities(value) {
+  return (Array.isArray(value) ? value : []).map((item) => String(item || '').trim().toLowerCase()).filter(Boolean);
+}
+
+function normalizeModelCatalogItem(item) {
+  if (typeof item === 'string') return { id: item, displayName: item, inputModalities: [], outputModalities: [], contextLength: 0, reasoning: false };
+  const id = String(item?.id || item?.name || '').trim();
+  if (!id) return null;
+  return {
+    id,
+    displayName: String(item.display_name || item.displayName || id).trim(),
+    inputModalities: normalizeModalities(item.input_modalities || item.inputModalities),
+    outputModalities: normalizeModalities(item.output_modalities || item.outputModalities),
+    contextLength: Math.max(0, Number(item.context_length || item.contextLength || item.inputTokenLimit) || 0),
+    reasoning: Boolean(item.capabilities?.reasoning ?? item.reasoning ?? item.thinking),
+  };
+}
+
+function isTeachingModel(model) {
+  if (!model?.id || NON_CHAT_MODEL_ID.test(model.id)) return false;
+  if (model.inputModalities.length && !model.inputModalities.includes('text')) return false;
+  if (model.outputModalities.length && !model.outputModalities.includes('text')) return false;
+  if (model.contextLength && model.contextLength < MIN_TEACHING_MODEL_CONTEXT) return false;
+  return true;
+}
+
+function filterTeachingModels(items) {
+  const normalized = (Array.isArray(items) ? items : []).map(normalizeModelCatalogItem).filter(Boolean);
+  const models = normalized.filter(isTeachingModel)
+    .sort((left, right) => left.id.localeCompare(right.id, 'en', { numeric: true }));
+  return { models, total: normalized.length, excluded: normalized.length - models.length, minimumContext: MIN_TEACHING_MODEL_CONTEXT };
+}
+
+async function fetchModelCatalog(settings) {
   const payload = await requestJson(endpoint(settings.baseUrl, '/models'), {
     method: 'GET',
     headers: authHeaders(settings.apiKey),
   }, 20000);
-  const items = Array.isArray(payload?.data) ? payload.data : Array.isArray(payload) ? payload : [];
-  return items.map((item) => typeof item === 'string' ? item : item?.id).filter(Boolean).sort();
+  const items = Array.isArray(payload?.data) ? payload.data
+    : Array.isArray(payload?.models) ? payload.models
+      : Array.isArray(payload) ? payload : [];
+  return filterTeachingModels(items);
+}
+
+async function fetchModels(settings) {
+  const catalog = await fetchModelCatalog(settings);
+  return catalog.models.map((item) => item.id);
 }
 
 function cleanAiText(value) {
@@ -500,7 +543,9 @@ ${JSON.stringify(evidence).slice(0, 28000)}`;
 
 module.exports = {
   endpoint,
+  fetchModelCatalog,
   fetchModels,
+  filterTeachingModels,
   generateExercises,
   generateExercisesForBlueprint,
   generateClassLearningReport,

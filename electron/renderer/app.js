@@ -187,11 +187,27 @@ function renderSettings() {
   form.gradingModel.value = settings.gradingModel || settings.model || '';
   form.attendanceTimeoutMinutes.value = settings.attendanceTimeoutMinutes || 1440;
   $('#key-status').textContent = settings.hasApiKey ? '已保存加密 API Key；留空不会覆盖' : '尚未保存 API Key';
-  $('#api-key-invite').hidden = Boolean(settings.hasApiKey);
   $('#model-options').innerHTML = (settings.modelOptions || []).map((model) => `<option value="${escapeHtml(model)}"></option>`).join('');
+  updateApiKeyInvite();
   const mailForm = $('#mail-form');
   for (const [key, value] of Object.entries(settings.mail || {})) if (mailForm.elements[key] && key !== 'password') mailForm.elements[key].value = value || '';
   mailForm.password.placeholder = settings.mail?.hasPassword ? '已保存；留空保留当前值' : '请输入授权码 / 密码';
+}
+
+function isZenMuxBaseUrl(value) {
+  try {
+    const hostname = new URL(String(value || '')).hostname.toLowerCase();
+    return hostname === 'zenmux.ai' || hostname.endsWith('.zenmux.ai');
+  } catch { return false; }
+}
+
+function updateApiKeyInvite() {
+  const form = $('#settings-form');
+  const settings = state.data?.settings || {};
+  const currentBaseUrl = String(form.baseUrl.value || '').trim().replace(/\/+$/, '');
+  const storedBaseUrl = String(settings.baseUrl || '').trim().replace(/\/+$/, '');
+  const hasApplicableKey = Boolean(form.apiKey.value.trim() || (settings.hasApiKey && currentBaseUrl === storedBaseUrl));
+  $('#api-key-invite').hidden = Boolean(hasApplicableKey || !isZenMuxBaseUrl(currentBaseUrl));
 }
 
 function renderStudents() {
@@ -726,11 +742,26 @@ $('#test-button').addEventListener('click', async (event) => {
 });
 
 $('#models-button').addEventListener('click', async (event) => {
-  event.target.disabled = true;
-  try { const result = await api('/api/models', { method: 'POST' }); toast(`已获取 ${result.models.length} 个模型`); await refresh(); }
+  const button = event.target;
+  const formElement = $('#settings-form');
+  button.disabled = true;
+  button.textContent = '正在筛选…';
+  try {
+    const result = await api('/api/models', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ baseUrl: formElement.baseUrl.value, apiKey: formElement.apiKey.value }),
+    });
+    await refresh();
+    $('#model-filter-status').childNodes[0].textContent = `已获取 ${result.models.length} 个适用模型，已排除 ${result.excluded} 个不适合教学工作流的模型。`;
+    toast(`已获取 ${result.models.length} 个适用模型，已排除 ${result.excluded} 个不适合教学工作流的模型`);
+  }
   catch (error) { toast(error.message, true); }
-  finally { event.target.disabled = false; }
+  finally { button.disabled = false; button.textContent = '获取适用模型'; }
 });
+
+$('#settings-form').baseUrl.addEventListener('input', updateApiKeyInvite);
+$('#settings-form').apiKey.addEventListener('input', updateApiKeyInvite);
 
 $('#dialog-close').addEventListener('click', () => { closeLessonStream(); $('#lesson-dialog').close(); });
 $('#report-close').addEventListener('click', () => $('#report-dialog').close());

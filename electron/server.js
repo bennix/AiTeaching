@@ -11,7 +11,7 @@ const { buildLessonRecords, extractDocumentText } = require('./lib/documents');
 const { normalizeUploadFilename } = require('./lib/filenames');
 const { buildLearningAnalytics, reportScopeKey } = require('./lib/analytics');
 const {
-  fetchModels,
+  fetchModelCatalog,
   generateExercises,
   generateExercisesForBlueprint,
   generateClassLearningReport,
@@ -671,10 +671,26 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         return sendJson(response, 200, { ok: true, message: result });
       }
       if (request.method === 'POST' && pathname === '/api/models') {
-        const models = await fetchModels(store.getSettings({ includeKey: true }));
+        const body = await readJson(request);
+        const storedSettings = store.getSettings({ includeKey: true });
+        const baseUrl = String(body.baseUrl || storedSettings.baseUrl || '').trim().replace(/\/+$/, '');
+        if (!/^https?:\/\//i.test(baseUrl)) throw new Error('请先填写有效的 BaseURL');
+        const storedBaseUrl = String(storedSettings.baseUrl || '').trim().replace(/\/+$/, '');
+        const catalog = await fetchModelCatalog({
+          ...storedSettings,
+          baseUrl,
+          apiKey: String(body.apiKey || '').trim() || (baseUrl === storedBaseUrl ? storedSettings.apiKey : ''),
+        });
+        const models = catalog.models.map((item) => item.id);
         if (!models.length) throw new Error('服务未返回可用模型列表，可直接手动填写模型 ID');
         store.setModelOptions(models);
-        return sendJson(response, 200, { ok: true, models });
+        return sendJson(response, 200, {
+          ok: true,
+          models,
+          total: catalog.total,
+          excluded: catalog.excluded,
+          minimumContext: catalog.minimumContext,
+        });
       }
       if (request.method === 'POST' && pathname === '/api/import') {
         const { fields, file } = await readMultipart(request);

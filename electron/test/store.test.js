@@ -18,6 +18,15 @@ test('API Key 加密保存且教师默认密码可修改', () => {
   assert.equal(store.verifyAdminPassword('new-pass'), true);
 });
 
+test('changing the AI provider never reuses the previous provider API key', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-provider-key-'));
+  const store = new JsonStore(runtimeDir);
+  store.updateSettings({ baseUrl: 'https://api.openai.com/v1', model: 'openai/model', apiKey: 'openai-secret' });
+  store.updateSettings({ baseUrl: 'https://zenmux.ai/api/v1', model: 'anthropic/model', apiKey: '' });
+  assert.equal(store.getSettings().hasApiKey, false);
+  assert.equal(store.getSettings({ includeKey: true }).apiKey, '');
+});
+
 test('loading existing data repairs previously stored Chinese filename mojibake', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-filename-'));
   const store = new JsonStore(runtimeDir);

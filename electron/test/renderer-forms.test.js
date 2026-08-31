@@ -26,7 +26,19 @@ test('teacher settings shows the ZenMux invite only when no API key is configure
   assert.match(html, /id="api-key-invite"[^>]*hidden/);
   assert.match(html, /href="https:\/\/zenmux\.ai\/invite\/GBQMC5"/);
   assert.match(html, /target="_blank" rel="noopener noreferrer"/);
-  assert.match(source, /\$\('#api-key-invite'\)\.hidden = Boolean\(settings\.hasApiKey\);/);
+  assert.match(source, /function updateApiKeyInvite\(/);
+  assert.match(source, /hasApplicableKey \|\| !isZenMuxBaseUrl/);
+  assert.match(source, /baseUrl\.addEventListener\('input', updateApiKeyInvite\)/);
+  assert.match(source, /apiKey\.addEventListener\('input', updateApiKeyInvite\)/);
+});
+
+test('teacher model picker explains and requests application-capable models', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  assert.match(html, /id="model-filter-status"/);
+  assert.match(html, /支持文本输入与文本输出/);
+  assert.match(html, /href="https:\/\/zenmux\.ai\/models"/);
+  assert.match(source, /baseUrl: formElement\.baseUrl\.value/);
+  assert.match(source, /已排除.*不适合教学工作流/);
 });
 
 test('exercise generator reports missing types and keeps its action in a separate footer', () => {

@@ -198,11 +198,14 @@ class JsonStore {
     const model = String(values.model || '').trim();
     if (!/^https?:\/\//i.test(baseUrl)) throw new Error('BaseURL 必须以 http:// 或 https:// 开头');
     if (!model) throw new Error('请选择或填写模型名称');
+    const previousBaseUrl = String(this.state.settings.baseUrl || '').trim().replace(/\/+$/, '');
     this.state.settings.baseUrl = baseUrl;
     this.state.settings.model = model;
     if (!this.state.settings.modelOptions.includes(model)) this.state.settings.modelOptions.unshift(model);
     if (String(values.apiKey || '').trim()) {
       this.state.settings.apiKeyEncrypted = this.encryptSecret(String(values.apiKey).trim());
+    } else if (baseUrl !== previousBaseUrl) {
+      this.state.settings.apiKeyEncrypted = '';
     }
     if (values.gradingModel) this.state.settings.gradingModel = String(values.gradingModel).trim();
     if (values.attendanceTimeoutMinutes) this.state.settings.attendanceTimeoutMinutes = Math.max(1, Number(values.attendanceTimeoutMinutes));
@@ -252,9 +255,6 @@ class JsonStore {
 
   setModelOptions(models) {
     this.state.settings.modelOptions = [...new Set(models.filter(Boolean))].slice(0, 200);
-    if (!this.state.settings.modelOptions.includes(this.state.settings.model)) {
-      this.state.settings.modelOptions.unshift(this.state.settings.model);
-    }
     this.save();
   }
 
