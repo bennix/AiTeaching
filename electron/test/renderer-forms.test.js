@@ -75,6 +75,12 @@ test('question bank rerenders live exercise batches from the lesson event stream
   assert.match(source, /AI 正在生成并复核第一批题目/);
 });
 
+test('publishing or withdrawing an exercise keeps the question bank tab active', () => {
+  assert.match(source, /async function openLesson\(id, activeTab = 'ai'\)/);
+  assert.match(source, /state\.activeTab = activeTab;/);
+  assert.match(source, /await openLesson\(lesson\.id, 'exercises'\)/);
+});
+
 test('student page selects an existing course and shows all course materials', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'student.html'), 'utf8');
   const studentSource = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'student.js'), 'utf8');

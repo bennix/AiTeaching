@@ -415,10 +415,10 @@ function watchLessonStream(id) {
   };
 }
 
-async function openLesson(id) {
+async function openLesson(id, activeTab = 'ai') {
   closeLessonStream();
   state.activeLesson = await api(`/api/lessons/${encodeURIComponent(id)}`);
-  state.activeTab = 'ai';
+  state.activeTab = activeTab;
   $('#dialog-week').textContent = `第 ${state.activeLesson.teachingWeek}/${state.activeLesson.totalWeeks} 周`;
   $('#dialog-title').textContent = state.activeLesson.title;
   $('#dialog-meta').textContent = `${state.activeLesson.courseName || '未填写课程'}${lessonClassLabel(state.activeLesson) ? ` · ${lessonClassLabel(state.activeLesson)}` : ''} · ${state.activeLesson.date || '未填写日期'} · ${state.activeLesson.sourceFilename}`;
@@ -427,7 +427,7 @@ async function openLesson(id) {
   $('#dialog-error').textContent = notice;
   $('#dialog-error').classList.toggle('warning', Boolean(state.activeLesson.warning && !state.activeLesson.error));
   $('#courseware-button').textContent = state.activeLesson.materials?.some((item) => item.type === 'ai_generated') ? '重新生成 AI 课件' : '生成 AI 课件';
-  $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === 'ai'));
+  $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === activeTab));
   renderDialogContent();
   if (!$('#lesson-dialog').open) $('#lesson-dialog').showModal();
   if (['queued', 'processing'].includes(state.activeLesson.status)) watchLessonStream(id);
@@ -529,7 +529,7 @@ function renderDialogContent() {
     });
     $$('[data-toggle-exercise]').forEach((button) => button.addEventListener('click', async () => {
       const action = button.dataset.published === 'true' ? 'unpublish' : 'publish';
-      try { await api(`/api/lessons/${encodeURIComponent(lesson.id)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseIds: [button.dataset.toggleExercise] }) }); await openLesson(lesson.id); }
+      try { await api(`/api/lessons/${encodeURIComponent(lesson.id)}/${action}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseIds: [button.dataset.toggleExercise] }) }); await openLesson(lesson.id, 'exercises'); }
       catch (error) { toast(error.message, true); }
     }));
   } else if (state.activeTab === 'attendance') {
