@@ -244,7 +244,7 @@ function parseJsonLoose(value, fallback) {
       const parsed = JSON.parse(source);
       if (Array.isArray(parsed)) return parsed;
       if (parsed && typeof parsed === 'object') {
-        for (const key of ['exercises', 'questions', 'items', 'data', '题目', '练习题']) {
+        for (const key of ['exercises', 'questions', 'reviews', 'items', 'data', '题目', '练习题']) {
           if (Array.isArray(parsed[key])) return parsed[key];
         }
       }
@@ -301,6 +301,7 @@ ${String(lesson.rawText || '').slice(0, 16000)}`;
 
 const EXERCISE_TYPES = ['choice', 'short_answer', 'application'];
 const EXERCISE_DIFFICULTIES = ['easy', 'medium', 'hard'];
+const INDEPENDENT_REVIEW_SUBJECT = /(数学|物理|化学|math(?:ematics)?|physics|chemistry)/i;
 const DEFAULT_EXERCISE_BLUEPRINT = [
   { type: 'choice', count: 4, difficulty: 'medium' },
   { type: 'short_answer', count: 2, difficulty: 'medium' },
@@ -342,6 +343,10 @@ function normalizeGeneratedExerciseType(value) {
   return text;
 }
 
+function requiresIndependentExerciseReview(lesson = {}) {
+  return INDEPENDENT_REVIEW_SUBJECT.test(String(lesson.courseName || '').trim());
+}
+
 function normalizedExerciseRecord(item, fallbackType) {
   if (!item || typeof item !== 'object') return null;
   const type = normalizeGeneratedExerciseType(item.type ?? item.questionType ?? item.题型 ?? item.类型 ?? fallbackType);
@@ -360,6 +365,8 @@ function normalizedExerciseRecord(item, fallbackType) {
     question,
     answer,
     explanation: String(item.explanation ?? item.analysis ?? item.解析 ?? item.说明 ?? ''),
+    solutionOne: String(item.solutionOne ?? item.solution1 ?? item.firstSolution ?? item.解法一 ?? ''),
+    solutionTwo: String(item.solutionTwo ?? item.solution2 ?? item.secondSolution ?? item.解法二 ?? ''),
     difficulty: String(item.difficulty ?? item.难度 ?? ''),
     knowledgePoint: String(item.knowledgePoint ?? item.knowledge_point ?? item.知识点 ?? ''),
   };
@@ -376,14 +383,76 @@ function parseGeneratedExercises(content, options) {
       question: String(item.question),
       answer: String(item.answer),
       explanation: String(item.explanation || ''),
+      solutionOne: String(item.solutionOne || ''),
+      solutionTwo: String(item.solutionTwo || ''),
       knowledgePoint: String(item.knowledgePoint || ''),
     })).slice(0, options.count);
 }
 
-async function generateExercises(settings, lesson, { targetStudentId = null, weakPoints = '', types, count, difficulty, excludeQuestions = [] } = {}) {
+async function reviewGeneratedExercises(settings, lesson, exercises) {
+  const primaryModel = String(settings.model || '').trim();
+  const reviewModel = String(settings.exerciseReviewModel || '').trim();
+  if (!reviewModel) throw new Error('数理化题目必须先在“AI 设置”中指定题目复核模型，复核通过后才能入库');
+  if (reviewModel === primaryModel) throw new Error('题目复核模型必须与主模型不同，才能进行独立交叉验证');
+
+  const candidates = exercises.map((exercise, index) => ({ index, exercise })).filter(({ exercise }) => {
+    const first = String(exercise.solutionOne || '').trim();
+    const second = String(exercise.solutionTwo || '').trim();
+    return first && second && first !== second;
+  });
+  if (!candidates.length) return [];
+
+  const reviewInput = candidates.map(({ index, exercise }) => ({
+    index,
+    type: exercise.type,
+    question: exercise.question,
+    proposedAnswer: exercise.answer,
+    solutionOne: exercise.solutionOne,
+    solutionTwo: exercise.solutionTwo,
+    knowledgePoint: exercise.knowledgePoint,
+  }));
+  const prompt = `你是独立于出题模型的数理化题目复核专家。请逐题重新验算，检查题干条件是否充分、答案是否唯一或表述严谨、两种解法是否真正独立且都能推出同一结论，并检查选择题选项与答案是否一致。
+
+只有完全正确、无歧义且两种解法互相印证的题目才能 approved=true。不要替不合格题目补条件或静默修正；不合格必须拒绝。只返回严格 JSON：
+{"reviews":[{"index":0,"approved":true,"verifiedAnswer":"独立验算确认的最终答案","reason":"复核依据；说明两种解法为何一致"}]}
+
+课程：${lesson.courseName || ''}，第 ${lesson.teachingWeek || ''} 周
+待复核题目：
+${JSON.stringify(reviewInput).slice(0, 36000)}`;
+  const payload = await requestJson(endpoint(settings.baseUrl, '/chat/completions'), {
+    method: 'POST', headers: authHeaders(settings.apiKey),
+    body: JSON.stringify({ model: reviewModel, messages: [{ role: 'user', content: prompt }], max_tokens: 2400 }),
+  });
+  const parsed = parseJsonLoose(payload?.choices?.[0]?.message?.content, []);
+  if (!Array.isArray(parsed)) return [];
+  const reviews = new Map(parsed.map((item) => [Number(item?.index), item]));
+  const reviewedAt = new Date().toISOString();
+  return candidates.map(({ index, exercise }) => {
+    const review = reviews.get(index);
+    const reason = String(review?.reason || '').trim();
+    const verifiedAnswer = String(review?.verifiedAnswer ?? review?.answer ?? '').trim();
+    if (review?.approved !== true || !reason || !verifiedAnswer) return null;
+    return {
+      ...exercise,
+      answer: verifiedAnswer,
+      explanation: `**解法一**\n\n${exercise.solutionOne}\n\n**解法二**\n\n${exercise.solutionTwo}\n\n**独立模型复核**\n\n${reason}`,
+      reviewedBy: reviewModel,
+      reviewedAt,
+      reviewReason: reason,
+    };
+  }).filter(Boolean);
+}
+
+async function generateExercises(settings, lesson, { targetStudentId = null, weakPoints = '', types, count, difficulty, excludeQuestions = [], onReview } = {}) {
   const options = normalizeExerciseOptions({ types, count, difficulty });
   const typeLabel = { choice: '选择题', short_answer: '简答题', application: '实践/应用题' };
   const difficultyLabel = { easy: '简单', medium: '中等', hard: '困难', mixed: '由易到难的混合难度' };
+  const needsReview = requiresIndependentExerciseReview(lesson);
+  if (needsReview) {
+    const reviewModel = String(settings.exerciseReviewModel || '').trim();
+    if (!reviewModel) throw new Error('数理化题目必须先在“AI 设置”中指定题目复核模型，复核通过后才能入库');
+    if (reviewModel === String(settings.model || '').trim()) throw new Error('题目复核模型必须与主模型不同，才能进行独立交叉验证');
+  }
   const prompt = `请根据以下教学周内容生成恰好 ${options.count} 道练习题。只返回一个严格有效的 JSON 对象，不要代码围栏，对象格式为 {"exercises":[...]}。JSON 字符串内容中不要使用未转义的英文双引号，需要引用术语时请使用中文引号“”。
 允许的题型仅限：${options.types.map((item) => `${item}（${typeLabel[item]}）`).join('、')}。
 难度要求：${difficultyLabel[options.difficulty]}。${options.difficulty === 'mixed' ? '请合理分配 easy、medium、hard。' : `每道题的 difficulty 必须是 ${options.difficulty}。`}
@@ -393,9 +462,12 @@ exercises 数组中的每一项格式：{
   "question":"题目；选择题须包含 A-D 四个选项",
   "answer":"参考答案；选择题以正确选项字母开头",
   "explanation":"说明为什么答案正确，并给出关键解题思路",
+  "solutionOne":"第一种完整解法",
+  "solutionTwo":"与解法一思路不同的第二种完整解法",
   "difficulty":"easy|medium|hard",
   "knowledgePoint":"知识点"
 }
+${needsReview ? '本课程属于数学、物理或化学。每道题必须提供两种真正独立的完整解法，并分别推导到同一最终答案；禁止把同一解法换句话重复。题目稍后还会交给另一个模型独立验算，未通过的题目不会入库。' : 'solutionOne 与 solutionTwo 可按学科需要提供；不强制要求非数理化题目使用双解。'}
 ${excludeQuestions.length ? `不得重复以下已生成题目：\n${excludeQuestions.map((item) => `- ${item}`).join('\n').slice(0, 6000)}` : ''}
 ${targetStudentId ? `这是给学生 ${targetStudentId} 的个性化练习，重点补强：${weakPoints || '近期薄弱知识点'}。` : ''}
 课程：${lesson.courseName || ''}，第 ${lesson.teachingWeek} 周
@@ -403,9 +475,12 @@ ${targetStudentId ? `这是给学生 ${targetStudentId} 的个性化练习，重
 ${String(lesson.aiResult || lesson.rawText || '').slice(0, 12000)}`;
   const payload = await requestJson(endpoint(settings.baseUrl, '/chat/completions'), {
     method: 'POST', headers: authHeaders(settings.apiKey),
-    body: JSON.stringify({ model: settings.gradingModel || settings.model, messages: [{ role: 'user', content: prompt }], max_tokens: 4096 }),
+    body: JSON.stringify({ model: settings.model, messages: [{ role: 'user', content: prompt }], max_tokens: 4096 }),
   });
-  return parseGeneratedExercises(payload?.choices?.[0]?.message?.content, options);
+  const generated = parseGeneratedExercises(payload?.choices?.[0]?.message?.content, options);
+  if (!needsReview) return generated;
+  onReview?.(generated.length);
+  return reviewGeneratedExercises(settings, lesson, generated);
 }
 
 async function generateExercisesForBlueprint(settings, lesson, blueprint, { onProgress } = {}) {
@@ -414,13 +489,19 @@ async function generateExercisesForBlueprint(settings, lesson, blueprint, { onPr
   for (const item of configs) {
     const collected = [];
     const seen = new Set();
+    const maxAttempts = requiresIndependentExerciseReview(lesson) ? Math.ceil(item.count / 4) + 3 : 3;
     onProgress?.([], { type: item.type, expected: item.count, actual: 0, phase: 'generating' });
-    for (let attempt = 0; attempt < 3 && collected.length < item.count; attempt += 1) {
+    for (let attempt = 0; attempt < maxAttempts && collected.length < item.count; attempt += 1) {
       let generated;
       try {
+        const remaining = item.count - collected.length;
+        const requestCount = requiresIndependentExerciseReview(lesson) ? Math.min(4, remaining) : remaining;
         generated = await generateExercises(settings, lesson, {
-          types: [item.type], count: item.count - collected.length, difficulty: item.difficulty,
+          types: [item.type], count: requestCount, difficulty: item.difficulty,
           excludeQuestions: collected.map((exercise) => exercise.question),
+          onReview: (candidateCount) => onProgress?.([], {
+            type: item.type, expected: item.count, actual: collected.length, candidateCount, phase: 'reviewing',
+          }),
         });
       } catch (error) {
         error.partialExercises = [...batches.flat(), ...collected, ...(Array.isArray(error.partialExercises) ? error.partialExercises : [])];
@@ -556,5 +637,7 @@ module.exports = {
   normalizeExerciseOptions,
   parseJsonLoose,
   parseGeneratedExercises,
+  requiresIndependentExerciseReview,
+  reviewGeneratedExercises,
   testConnection,
 };

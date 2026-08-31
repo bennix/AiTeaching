@@ -27,6 +27,22 @@ test('changing the AI provider never reuses the previous provider API key', () =
   assert.equal(store.getSettings({ includeKey: true }).apiKey, '');
 });
 
+test('exercise review model is stored separately and must differ from the primary model', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-review-model-'));
+  const store = new JsonStore(runtimeDir);
+  store.updateSettings({
+    baseUrl: 'https://example.com/v1', model: 'primary-model', gradingModel: 'grading-model',
+    exerciseReviewModel: 'review-model', apiKey: 'secret',
+  });
+  assert.equal(store.getSettings().gradingModel, 'grading-model');
+  assert.equal(store.getSettings().exerciseReviewModel, 'review-model');
+  assert.throws(() => store.updateSettings({
+    baseUrl: 'https://example.com/v1', model: 'primary-model', exerciseReviewModel: 'primary-model',
+  }), /必须与主模型不同/);
+  store.updateSettings({ baseUrl: 'https://example.com/v1', model: 'primary-model', exerciseReviewModel: '' });
+  assert.equal(store.getSettings().exerciseReviewModel, '');
+});
+
 test('loading existing data repairs previously stored Chinese filename mojibake', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-filename-'));
   const store = new JsonStore(runtimeDir);

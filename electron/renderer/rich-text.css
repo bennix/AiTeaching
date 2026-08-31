@@ -128,6 +128,16 @@
 .exercise-generator legend { font-size: 12px; font-weight: 700; margin-bottom: 7px; }
 .exercise-generator fieldset label { font-size: 12px; white-space: nowrap; }
 .exercise-generator input[type="checkbox"] { margin-right: 3px; width: auto; }
+.exercise-review-details {
+  background: #f8f8ff;
+  border: 1px solid #dedafa;
+  border-radius: 10px;
+  margin: 12px 0;
+  padding: 11px 13px;
+}
+.exercise-review-details summary { color: #5145d8; cursor: pointer; font-weight: 750; }
+.exercise-review-details > div { border-top: 1px solid #e5e2f7; display: grid; gap: 7px; margin-top: 10px; padding-top: 10px; }
+.exercise-review-details small { color: #7d879a; }
 #report-dialog { width: min(820px, 90vw); }
 
 @media (max-width: 1050px) {

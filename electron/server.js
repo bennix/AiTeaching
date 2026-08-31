@@ -152,6 +152,9 @@ function exerciseRecords(generated, lessonId, { targetStudentId = null, publishe
     type: ['choice', 'short_answer', 'application', 'coding'].includes(item.type) ? item.type : 'short_answer',
     question: String(item.question || '').replace(/^\s*(?:第?\s*\d+\s*[题.、:：)]|[（(]\s*\d+\s*[）)])\s*/, ''),
     answer: String(item.answer || ''), explanation: String(item.explanation || ''),
+    solutionOne: String(item.solutionOne || ''), solutionTwo: String(item.solutionTwo || ''),
+    reviewedBy: String(item.reviewedBy || ''), reviewedAt: String(item.reviewedAt || ''),
+    reviewReason: String(item.reviewReason || ''),
     difficulty: ['easy', 'medium', 'hard'].includes(item.difficulty) ? item.difficulty : 'medium',
     knowledgePoint: String(item.knowledgePoint || ''), createdAt: new Date().toISOString(),
   })).filter((item) => item.question && item.answer);

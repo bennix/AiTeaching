@@ -37,6 +37,8 @@ test('teacher model picker explains and requests application-capable models', ()
   assert.match(html, /id="model-filter-status"/);
   assert.match(html, /<select id="model-options-select"/);
   assert.match(html, /<select id="grading-model-options-select"/);
+  assert.match(html, /<select id="exercise-review-model-options-select"/);
+  assert.match(html, /数理化必填，且必须不同于主模型/);
   assert.doesNotMatch(html, /<datalist id="model-options"/);
   assert.match(html, /支持文本输入与文本输出/);
   assert.match(html, /href="https:\/\/zenmux\.ai\/models"/);
@@ -44,8 +46,16 @@ test('teacher model picker explains and requests application-capable models', ()
   assert.match(source, /请选择已获取的适用模型（\$\{models\.length\} 个）/);
   assert.match(source, /model-options-select'\)\.addEventListener\('change'/);
   assert.match(source, /grading-model-options-select'\)\.addEventListener\('change'/);
+  assert.match(source, /exercise-review-model-options-select'\)\.addEventListener\('change'/);
   assert.match(source, /baseUrl: formElement\.baseUrl\.value/);
   assert.match(source, /已排除.*不适合教学工作流/);
+});
+
+test('STEM exercise workflow exposes independent review progress and verification evidence', () => {
+  assert.match(source, /progress\?\.phase === 'reviewing'/);
+  assert.match(source, /只有复核通过的题目会自动出现在这里/);
+  assert.match(source, /查看两种解法与复核记录/);
+  assert.match(source, /复核模型：/);
 });
 
 test('exercise generator reports missing types and keeps its action in a separate footer', () => {
@@ -62,7 +72,7 @@ test('question bank rerenders live exercise batches from the lesson event stream
   assert.match(source, /\['ai', 'exercises'\]\.includes\(state\.activeTab\)/);
   assert.match(source, /正在生成\$\{exerciseTypeLabel\(progress\.type\)\}/);
   assert.match(source, /已完成的题目会立即显示在下方/);
-  assert.match(source, /AI 正在生成第一批题目/);
+  assert.match(source, /AI 正在生成并复核第一批题目/);
 });
 
 test('student page selects an existing course and shows all course materials', () => {

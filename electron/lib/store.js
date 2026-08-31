@@ -15,6 +15,7 @@ const DEFAULT_STATE = {
     apiKeyEncrypted: '',
     adminPasswordHash: '',
     gradingModel: '',
+    exerciseReviewModel: '',
     attendanceTimeoutMinutes: 1440,
     mail: {
       host: '', port: 465, security: 'ssl', username: '', passwordEncrypted: '',
@@ -181,6 +182,7 @@ class JsonStore {
       model: settings.model,
       modelOptions: settings.modelOptions,
       gradingModel: settings.gradingModel || settings.model,
+      exerciseReviewModel: settings.exerciseReviewModel || '',
       attendanceTimeoutMinutes: settings.attendanceTimeoutMinutes || 1440,
       hasApiKey: Boolean(settings.apiKeyEncrypted),
       hasCustomAdminPassword: Boolean(settings.adminPasswordHash),
@@ -196,8 +198,12 @@ class JsonStore {
   updateSettings(values) {
     const baseUrl = String(values.baseUrl || '').trim().replace(/\/+$/, '');
     const model = String(values.model || '').trim();
+    const exerciseReviewModel = Object.hasOwn(values, 'exerciseReviewModel')
+      ? String(values.exerciseReviewModel || '').trim()
+      : String(this.state.settings.exerciseReviewModel || '').trim();
     if (!/^https?:\/\//i.test(baseUrl)) throw new Error('BaseURL 必须以 http:// 或 https:// 开头');
     if (!model) throw new Error('请选择或填写模型名称');
+    if (exerciseReviewModel && exerciseReviewModel === model) throw new Error('题目复核模型必须与主模型不同');
     const previousBaseUrl = String(this.state.settings.baseUrl || '').trim().replace(/\/+$/, '');
     this.state.settings.baseUrl = baseUrl;
     this.state.settings.model = model;
@@ -207,7 +213,8 @@ class JsonStore {
     } else if (baseUrl !== previousBaseUrl) {
       this.state.settings.apiKeyEncrypted = '';
     }
-    if (values.gradingModel) this.state.settings.gradingModel = String(values.gradingModel).trim();
+    if (Object.hasOwn(values, 'gradingModel')) this.state.settings.gradingModel = String(values.gradingModel || '').trim();
+    if (Object.hasOwn(values, 'exerciseReviewModel')) this.state.settings.exerciseReviewModel = exerciseReviewModel;
     if (values.attendanceTimeoutMinutes) this.state.settings.attendanceTimeoutMinutes = Math.max(1, Number(values.attendanceTimeoutMinutes));
     this.save();
     return this.getSettings();

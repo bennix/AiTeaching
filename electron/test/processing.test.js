@@ -90,7 +90,10 @@ test('exercise network failure preserves the completed plan and does not block l
 
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-processing-network-'));
   const store = new JsonStore(runtimeDir);
-  store.updateSettings({ baseUrl: `http://127.0.0.1:${aiServer.address().port}`, model: 'test-model', apiKey: 'test-key' });
+  store.updateSettings({
+    baseUrl: `http://127.0.0.1:${aiServer.address().port}`,
+    model: 'test-model', exerciseReviewModel: 'review-model', apiKey: 'test-key',
+  });
   const lessons = buildLessonRecords({
     text: '# 第1周 导论\n内容一\n# 第2周 函数\n内容二', filename: '两周教案.md', scope: 'semester',
     courseName: '数学', className: '一班', startDate: '2026-09-01', totalWeeks: 2,

@@ -185,6 +185,7 @@ function renderSettings() {
   form.baseUrl.value = settings.baseUrl || '';
   form.model.value = settings.model || '';
   form.gradingModel.value = settings.gradingModel || settings.model || '';
+  form.exerciseReviewModel.value = settings.exerciseReviewModel || '';
   form.attendanceTimeoutMinutes.value = settings.attendanceTimeoutMinutes || 1440;
   $('#key-status').textContent = settings.hasApiKey ? '已保存加密 API Key；留空不会覆盖' : '尚未保存 API Key';
   renderModelSelectors(settings);
@@ -199,11 +200,14 @@ function renderModelSelectors(settings) {
   const options = models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join('');
   const mainSelect = $('#model-options-select');
   const gradingSelect = $('#grading-model-options-select');
+  const reviewSelect = $('#exercise-review-model-options-select');
   mainSelect.innerHTML = `<option value="">${models.length ? `请选择已获取的适用模型（${models.length} 个）` : '尚未获取模型列表'}</option>${options}`;
   gradingSelect.innerHTML = `<option value="">使用主模型</option>${options}`;
+  reviewSelect.innerHTML = `<option value="">尚未指定</option>${options}`;
   mainSelect.value = models.includes(settings.model) ? settings.model : '';
   const gradingModel = settings.gradingModel || settings.model || '';
   gradingSelect.value = models.includes(gradingModel) ? gradingModel : '';
+  reviewSelect.value = models.includes(settings.exerciseReviewModel) ? settings.exerciseReviewModel : '';
 }
 
 function syncModelSelect(input, select) {
@@ -491,15 +495,15 @@ function renderDialogContent() {
     const coverageText = coverage.rows.map((item) => `${item.label} ${item.actual}/${item.expected}`).join(' · ');
     const generating = lesson.status === 'processing' && lesson.processingStage === 'exercises';
     const progress = lesson.exerciseProgress;
-    const progressText = progress
-      ? `正在生成${exerciseTypeLabel(progress.type)}：本批已收到 ${progress.actual}/${progress.expected} 道`
-      : '正在连接 AI 并准备本周题库…';
+    const progressText = progress?.phase === 'reviewing'
+      ? `正在由独立模型复核 ${progress.candidateCount || 0} 道${exerciseTypeLabel(progress.type)}：已通过 ${progress.actual}/${progress.expected} 道`
+      : (progress ? `正在生成${exerciseTypeLabel(progress.type)}：本批已通过 ${progress.actual}/${progress.expected} 道` : '正在连接 AI 并准备本周题库…');
     content.innerHTML = `<form id="exercise-generator-form" class="exercise-generator">
       <div class="exercise-generator-heading"><strong>${generating ? '正在生成本周题库' : (coverage.missing.length ? '补齐当前章节题库' : '为当前章节继续出题')}</strong><small>${escapeHtml(coverageText)}</small></div>
       ${generating ? `<div class="exercise-live-progress"><span class="streaming-dot"></span><strong>${escapeHtml(progressText)}</strong><small>已完成的题目会立即显示在下方，无需离开或刷新页面。</small></div>` : (coverage.missing.length ? `<div class="exercise-coverage-warning">当前题库还缺：${escapeHtml(coverage.missing.map((item) => `${item.label} ${item.expected - item.actual} 道`).join('、'))}。下方已自动填写缺少数量。</div>` : '')}
       <div class="exercise-config-grid">${exerciseConfigRows('manual_', formConfigs)}</div>
       <div class="exercise-generator-actions"><small>每种题型可分别设置数量与难度，单次合计不超过 30 道</small><button class="button primary" type="submit" ${generating ? 'disabled' : ''}>${generating ? '题库生成中…' : (coverage.missing.length ? '补齐缺少题目' : '确认参数并生成')}</button></div>
-    </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(exerciseTypeLabel(item.type))}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span><span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><span class="exercise-index">${index + 1}</span><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div><div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : `<div class="empty">${generating ? '<strong>AI 正在生成第一批题目…</strong><br>收到后会自动出现在这里。' : '暂无题目，请在上方选择参数后生成。'}</div>`}</div>`;
+    </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(exerciseTypeLabel(item.type))}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span>${item.reviewedBy ? '<span class="badge success">双解 · 独立复核通过</span>' : ''}<span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><span class="exercise-index">${index + 1}</span><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div>${item.reviewedBy ? `<details class="exercise-review-details"><summary>查看两种解法与复核记录</summary><div><strong>解法一</strong><div class="markdown-body">${richHtml(item.solutionOne)}</div><strong>解法二</strong><div class="markdown-body">${richHtml(item.solutionTwo)}</div><strong>独立复核</strong><div class="markdown-body">${richHtml(item.reviewReason)}</div><small>复核模型：${escapeHtml(item.reviewedBy)}</small></div></details>` : ''}<div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : `<div class="empty">${generating ? '<strong>AI 正在生成并复核第一批题目…</strong><br>只有复核通过的题目会自动出现在这里。' : '暂无题目，请在上方选择参数后生成。'}</div>`}</div>`;
     RichText.typeset(content);
     $('#exercise-generator-form').addEventListener('submit', async (event) => {
       event.preventDefault();
@@ -785,8 +789,12 @@ $('#model-options-select').addEventListener('change', (event) => {
 $('#grading-model-options-select').addEventListener('change', (event) => {
   $('#settings-form').gradingModel.value = event.currentTarget.value;
 });
+$('#exercise-review-model-options-select').addEventListener('change', (event) => {
+  $('#settings-form').exerciseReviewModel.value = event.currentTarget.value;
+});
 $('#settings-form').model.addEventListener('input', (event) => syncModelSelect(event.currentTarget, $('#model-options-select')));
 $('#settings-form').gradingModel.addEventListener('input', (event) => syncModelSelect(event.currentTarget, $('#grading-model-options-select')));
+$('#settings-form').exerciseReviewModel.addEventListener('input', (event) => syncModelSelect(event.currentTarget, $('#exercise-review-model-options-select')));
 
 $('#dialog-close').addEventListener('click', () => { closeLessonStream(); $('#lesson-dialog').close(); });
 $('#report-close').addEventListener('click', () => $('#report-dialog').close());

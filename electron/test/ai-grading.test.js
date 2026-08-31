@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { generateExercisesForBlueprint, gradeAnswer } = require('../lib/ai');
+const { generateExercises, generateExercisesForBlueprint, gradeAnswer, requiresIndependentExerciseReview } = require('../lib/ai');
 
 async function mockAi(handler) {
   const server = http.createServer(async (request, response) => {
@@ -64,4 +64,78 @@ test('exercise generation retries shortages and accepts Chinese type aliases', a
   assert.deepEqual(progressEvents.map((item) => [item.fresh, item.actual, item.phase]), [
     [0, 0, 'generating'], [0, 0, 'generating'], [2, 2, 'generating'], [0, 2, 'complete'],
   ]);
+});
+
+test('math, physics and chemistry require a distinct exercise review model', async () => {
+  assert.equal(requiresIndependentExerciseReview({ courseName: '高一数学' }), true);
+  assert.equal(requiresIndependentExerciseReview({ courseName: '大学物理' }), true);
+  assert.equal(requiresIndependentExerciseReview({ courseName: '基础化学' }), true);
+  assert.equal(requiresIndependentExerciseReview({ courseName: '大学英语' }), false);
+  await assert.rejects(() => generateExercises({ baseUrl: 'https://invalid.example', apiKey: 'key', model: 'primary' }, {
+    courseName: '高一数学', teachingWeek: 1, aiResult: '集合',
+  }, { types: ['choice'], count: 1 }), /指定题目复核模型/);
+  await assert.rejects(() => generateExercises({
+    baseUrl: 'https://invalid.example', apiKey: 'key', model: 'same', exerciseReviewModel: 'same',
+  }, { courseName: '物理', teachingWeek: 1 }, { types: ['choice'], count: 1 }), /必须与主模型不同/);
+});
+
+test('independent reviewer rejects unsafe STEM questions before they can be returned for storage', async (context) => {
+  const models = [];
+  const mock = await mockAi((body) => {
+    models.push(body.model);
+    if (body.model === 'reviewer') return JSON.stringify({ reviews: [
+      { index: 0, approved: true, verifiedAnswer: '$x=2$', reason: '代数法与图像法都得到 x=2' },
+      { index: 1, approved: false, verifiedAnswer: '', reason: '题干条件不足，答案不唯一' },
+    ] });
+    return JSON.stringify({ exercises: [
+      { type: 'short_answer', question: '求方程 $x+1=3$ 的解。', answer: '$x=2$', solutionOne: '移项得到 $x=2$。', solutionTwo: '作图求交点得到 $x=2$。', difficulty: 'easy', knowledgePoint: '方程' },
+      { type: 'short_answer', question: '求未知量。', answer: '1', solutionOne: '猜测为 1。', solutionTwo: '仍猜测为 1。', difficulty: 'easy', knowledgePoint: '方程' },
+    ] });
+  });
+  context.after(mock.close);
+  const result = await generateExercises({
+    baseUrl: mock.baseUrl, apiKey: 'test', model: 'primary', exerciseReviewModel: 'reviewer',
+  }, { courseName: '高一数学', teachingWeek: 1, aiResult: '一元一次方程' }, {
+    types: ['short_answer'], count: 2, difficulty: 'easy',
+  });
+  assert.deepEqual(models, ['primary', 'reviewer']);
+  assert.equal(result.length, 1);
+  assert.equal(result[0].question, '求方程 $x+1=3$ 的解。');
+  assert.equal(result[0].answer, '$x=2$');
+  assert.equal(result[0].reviewedBy, 'reviewer');
+  assert.match(result[0].explanation, /解法一/);
+  assert.match(result[0].explanation, /解法二/);
+  assert.match(result[0].explanation, /独立模型复核/);
+});
+
+test('blueprint retries rejected STEM candidates and emits only reviewer-approved questions', async (context) => {
+  let primaryCalls = 0;
+  let reviewCalls = 0;
+  const progressEvents = [];
+  const mock = await mockAi((body) => {
+    if (body.model === 'reviewer') {
+      reviewCalls += 1;
+      return JSON.stringify({ reviews: [{
+        index: 0, approved: reviewCalls > 1, verifiedAnswer: reviewCalls > 1 ? '42' : '',
+        reason: reviewCalls > 1 ? '两种计算路径均得到 42' : '第二种解法不能成立',
+      }] });
+    }
+    primaryCalls += 1;
+    return JSON.stringify({ exercises: [{
+      type: 'application', question: `候选题 ${primaryCalls}`, answer: '42',
+      solutionOne: '由定义直接计算得到 42。', solutionTwo: '代入结果反向检验得到 42。',
+      difficulty: 'hard', knowledgePoint: '综合计算',
+    }] });
+  });
+  context.after(mock.close);
+  const result = await generateExercisesForBlueprint({
+    baseUrl: mock.baseUrl, apiKey: 'test', model: 'primary', exerciseReviewModel: 'reviewer',
+  }, { courseName: '物理', teachingWeek: 2, aiResult: '综合计算' }, {
+    typeConfigs: [{ type: 'application', count: 1, difficulty: 'hard' }],
+  }, { onProgress: (fresh, progress) => progressEvents.push({ questions: fresh.map((item) => item.question), ...progress }) });
+  assert.equal(primaryCalls, 2);
+  assert.equal(reviewCalls, 2);
+  assert.deepEqual(result.map((item) => item.question), ['候选题 2']);
+  assert.deepEqual(progressEvents.flatMap((event) => event.questions), ['候选题 2']);
+  assert.equal(progressEvents.filter((event) => event.phase === 'reviewing').length, 2);
 });
