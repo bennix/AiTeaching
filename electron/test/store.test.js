@@ -84,6 +84,59 @@ test('batch deletion removes only selected lessons and their dependent records',
   assert.equal(fs.existsSync(path.join(store.uploadDir, 'shared-source.md')), true);
 });
 
+test('deleting a class removes its roster data and unlinks only that class from lessons', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-delete-class-'));
+  const store = new JsonStore(runtimeDir);
+  const materialPath = path.join(store.uploadDir, 'class-material.pdf');
+  fs.writeFileSync(materialPath, 'material');
+  store.state.students.push(
+    { studentId: 'S1', courseName: '数学', className: '一班' },
+    { studentId: 'S2', courseName: '数学', className: '二班' },
+  );
+  store.state.lessons.push({ id: 'lesson-1', courseName: '数学', className: '一班', classNames: ['一班', '二班'] });
+  store.state.exercises.push({ id: 'personalized', targetStudentId: 'S1' }, { id: 'shared', lessonId: 'lesson-1' });
+  store.state.submissions.push({ id: 'submission-1', studentId: 'S1', exerciseId: 'shared' });
+  store.state.attendance.push({ id: 'attendance-1', studentId: 'S1', lessonId: 'lesson-1' });
+  store.state.studentReports.push({ id: 'report-1', studentId: 'S1' });
+  store.state.classReports.push({ id: 'class-report', courseName: '数学', className: '一班' });
+  store.state.classMaterials.push({ id: 'class-material', courseName: '数学', className: '一班', filePath: materialPath });
+  store.save();
+
+  assert.deepEqual(store.deleteClass('数学', '一班'), { students: 1, lessons: 1, materials: 1 });
+  assert.deepEqual(store.state.students.map((item) => item.studentId), ['S2']);
+  assert.deepEqual(store.state.lessons[0].classNames, ['二班']);
+  assert.equal(store.state.lessons[0].className, '二班');
+  assert.deepEqual(store.state.exercises.map((item) => item.id), ['shared']);
+  assert.deepEqual(store.state.submissions, []);
+  assert.deepEqual(store.state.attendance, []);
+  assert.deepEqual(store.state.studentReports, []);
+  assert.deepEqual(store.state.classReports, []);
+  assert.deepEqual(store.state.classMaterials, []);
+  assert.equal(fs.existsSync(materialPath), false);
+});
+
+test('deleting a course cascades through lessons, classes and course resources', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-delete-course-'));
+  const store = new JsonStore(runtimeDir);
+  store.state.students.push(
+    { studentId: 'S1', courseName: '数学', className: '一班' },
+    { studentId: 'S2', courseName: '英语', className: '二班' },
+  );
+  store.state.lessons.push(
+    { id: 'math', courseName: '数学' },
+    { id: 'english', courseName: '英语' },
+  );
+  store.state.exercises.push({ id: 'math-exercise', lessonId: 'math' }, { id: 'english-exercise', lessonId: 'english' });
+  store.state.submissions.push({ id: 'math-submission', studentId: 'S1', exerciseId: 'math-exercise' }, { id: 'english-submission', studentId: 'S2', exerciseId: 'english-exercise' });
+  store.save();
+
+  assert.deepEqual(store.deleteCourse('数学'), { lessons: 1, students: 1, materials: 0 });
+  assert.deepEqual(store.state.lessons.map((item) => item.id), ['english']);
+  assert.deepEqual(store.state.students.map((item) => item.studentId), ['S2']);
+  assert.deepEqual(store.state.exercises.map((item) => item.id), ['english-exercise']);
+  assert.deepEqual(store.state.submissions.map((item) => item.id), ['english-submission']);
+});
+
 test('loading existing data keeps only the latest AI courseware for each lesson', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-courseware-'));
   const store = new JsonStore(runtimeDir);

@@ -48,10 +48,15 @@ function cookies(request) {
 
 function studentCourseCatalog(store) {
   const courses = new Map();
+  const establishedClasses = new Set(store.state.students
+    .map((item) => [String(item.courseName || '').trim(), String(item.className || '').trim()])
+    .filter(([courseName, className]) => courseName && className)
+    .map(([courseName, className]) => `${courseName}\u0000${className}`));
   for (const lesson of store.state.lessons.filter((item) => item.status === 'done')) {
     const courseName = String(lesson.courseName || '').trim();
     if (!courseName) continue;
     for (const className of lessonClassNames(lesson)) {
+      if (!className || !establishedClasses.has(`${courseName}\u0000${className}`)) continue;
       const id = Buffer.from(JSON.stringify([courseName, className]), 'utf8').toString('base64url');
       if (!courses.has(id)) courses.set(id, { id, courseName, className, label: className ? `${courseName} · ${className}` : courseName });
     }
@@ -74,6 +79,7 @@ function parseClassNames(value, fallback = '') {
 }
 
 function resolveStudentCourse(store, student, courseId = '') {
+  if (!student) return null;
   const courses = studentCourseCatalog(store);
   const requested = courses.find((item) => item.id === courseId);
   if (requested) return requested;
@@ -85,6 +91,7 @@ function resolveStudentCourse(store, student, courseId = '') {
 }
 
 function visibleLessonsForStudent(store, student, course = null) {
+  if (!student) return [];
   if (course) {
     return store.state.lessons.filter((lesson) => lesson.status === 'done'
       && lesson.courseName === course.courseName
@@ -750,6 +757,16 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
           warning,
         });
       }
+      if (request.method === 'POST' && pathname === '/api/classes/delete') {
+        const body = await readJson(request);
+        const result = store.deleteClass(body.courseName, body.className);
+        return sendJson(response, 200, { ok: true, deleted: result });
+      }
+      if (request.method === 'POST' && pathname === '/api/courses/delete') {
+        const body = await readJson(request);
+        const result = store.deleteCourse(body.courseName);
+        return sendJson(response, 200, { ok: true, deleted: result });
+      }
       const lessonClassesMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/classes$/);
       if (request.method === 'PUT' && lessonClassesMatch) {
         const lesson = store.getLesson(lessonClassesMatch[1]);
@@ -974,6 +991,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
 
       if (request.method === 'GET' && pathname === '/api/student/state') {
         const student = store.state.students.find((item) => item.studentId === session.studentId);
+        if (!student) return sendJson(response, 401, { error: '学生或所在班级已被删除，请重新登录' });
         const availableCourses = studentCourseCatalog(store);
         const course = resolveStudentCourse(store, student, session.courseId);
         session.courseId = course?.id || '';

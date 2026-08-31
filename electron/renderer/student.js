@@ -1,4 +1,4 @@
-const studentState = { data: null, lessonId: '' };
+const studentState = { data: null, lessonId: '', courseName: '', loginCatalog: [] };
 const $ = (selector) => document.querySelector(selector);
 const $$ = (selector) => [...document.querySelectorAll(selector)];
 const esc = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
@@ -8,6 +8,17 @@ async function api(url, options = {}) { const response = await fetch(url, option
 function toast(message, error = false) { const node = $('#student-toast'); node.textContent = message; node.classList.toggle('error', error); node.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => { node.hidden = true; }, 3200); }
 
 function selectedLesson() { return studentState.data.lessons.find((item) => item.id === studentState.lessonId) || studentState.data.lessons[0]; }
+function courseNames(courses = []) { return [...new Set(courses.map((item) => item.courseName).filter(Boolean))].sort((left, right) => left.localeCompare(right, 'zh-CN')); }
+function classesForCourse(courses, courseName) { return courses.filter((item) => item.courseName === courseName).sort((left, right) => left.className.localeCompare(right.className, 'zh-CN')); }
+function renderLoginClasses(courseName) {
+  const classes = classesForCourse(studentState.loginCatalog, courseName);
+  const select = $('#student-class-select');
+  select.innerHTML = classes.length
+    ? `<option value="">请选择班级</option>${classes.map((item) => `<option value="${esc(item.id)}" data-class-name="${esc(item.className)}">${esc(item.className)}</option>`).join('')}`
+    : '<option value="">该课程暂无可用班级</option>';
+  select.disabled = !classes.length;
+  $('#student-login-form button').disabled = !classes.length;
+}
 function feedbackMarkup(submission) {
   if (!submission.reason && !submission.correctApproach) return `<div class="markdown-body">${richHtml(submission.feedback)}</div>`;
   return `<div class="feedback-detail"><strong>判定理由</strong><div class="markdown-body">${richHtml(submission.reason || '暂无')}</div><strong>正确思路</strong><div class="markdown-body">${richHtml(submission.correctApproach || '暂无')}</div>${submission.suggestion ? `<strong>改进建议</strong><div class="markdown-body">${richHtml(submission.suggestion)}</div>` : ''}</div>`;
@@ -15,13 +26,21 @@ function feedbackMarkup(submission) {
 function render() {
   const data = studentState.data; const student = data.student;
   const selectedCourse = data.availableCourses.find((item) => item.id === data.selectedCourseId);
+  const names = courseNames(data.availableCourses);
+  if (!names.includes(studentState.courseName)) studentState.courseName = selectedCourse?.courseName || names[0] || '';
   $('#student-identity').textContent = `${student.name} · ${student.className || '未分班'}${selectedCourse ? ` · ${selectedCourse.courseName}` : ''}`;
   $('#student-welcome').textContent = `${student.name}，你好`;
   const courseSelect = $('#student-course-select');
-  courseSelect.innerHTML = data.availableCourses.length
-    ? data.availableCourses.map((item) => `<option value="${esc(item.id)}" ${item.id === data.selectedCourseId ? 'selected' : ''}>${esc(item.label)}</option>`).join('')
+  courseSelect.innerHTML = names.length
+    ? names.map((courseName) => `<option value="${esc(courseName)}" ${courseName === studentState.courseName ? 'selected' : ''}>${esc(courseName)}</option>`).join('')
     : '<option value="">暂无已发布课程</option>';
-  courseSelect.disabled = !data.availableCourses.length;
+  courseSelect.disabled = !names.length;
+  const classSelect = $('#student-course-class-select');
+  const availableClasses = classesForCourse(data.availableCourses, studentState.courseName);
+  classSelect.innerHTML = availableClasses.length
+    ? availableClasses.map((item) => `<option value="${esc(item.id)}" ${item.id === data.selectedCourseId ? 'selected' : ''}>${esc(item.className)}</option>`).join('')
+    : '<option value="">暂无可用班级</option>';
+  classSelect.disabled = !availableClasses.length;
   const select = $('#student-lesson-select');
   select.innerHTML = data.lessons.map((item) => `<option value="${esc(item.id)}" ${item.id === studentState.lessonId ? 'selected' : ''}>第 ${item.teachingWeek} 周 · ${esc(item.title)}</option>`).join('');
   const lesson = selectedLesson();
@@ -56,13 +75,16 @@ function render() {
 }
 
 async function load() { studentState.data = await api('/api/student/state'); if (!studentState.lessonId) studentState.lessonId = studentState.data.lessons[0]?.id || ''; render(); }
+async function switchStudentCourse(courseId) { await api('/api/student/course', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseId }) }); studentState.lessonId = ''; await load(); toast('课程与班级已切换'); }
 async function previewStudentCourseware(materialId) { try { const result = await api(`/api/student/material/${encodeURIComponent(materialId)}/preview`); $('#student-courseware-title').textContent = result.filename || '课件预览'; RichText.render($('#student-courseware-content'), result.markdown, '暂无课件内容。'); if (!$('#student-courseware-preview').open) $('#student-courseware-preview').showModal(); } catch (error) { toast(error.message, true); } }
 async function submitAnswer(event) { event.preventDefault(); const form = event.currentTarget; const button = form.querySelector('button'); if (button) button.disabled = true; try { const result = await api('/api/student/submit', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseId: form.dataset.exerciseForm, answer: new FormData(form).get('answer') }) }); toast(result.submission.correct ? '回答正确，已显示判定理由' : '答案需要调整，已显示原因和正确思路'); await load(); } catch (error) { toast(error.message, true); } finally { if (button) button.disabled = false; } }
 $$('.student-nav[data-student-view]').forEach((button) => button.addEventListener('click', () => { $$('.student-nav').forEach((item) => item.classList.toggle('active', item === button)); $$('.student-view').forEach((view) => view.classList.toggle('active', view.id === `student-view-${button.dataset.studentView}`)); }));
 $('#student-lesson-select').addEventListener('change', (event) => { studentState.lessonId = event.target.value; render(); });
-$('#student-course-select').addEventListener('change', async (event) => { try { await api('/api/student/course', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ courseId: event.target.value }) }); studentState.lessonId = ''; await load(); toast('课程已切换'); } catch (error) { toast(error.message, true); } });
+$('#student-course-select').addEventListener('change', async (event) => { studentState.courseName = event.target.value; const firstClass = classesForCourse(studentState.data.availableCourses, studentState.courseName)[0]; if (!firstClass) return render(); try { await switchStudentCourse(firstClass.id); } catch (error) { toast(error.message, true); } });
+$('#student-course-class-select').addEventListener('change', async (event) => { if (!event.target.value) return; try { await switchStudentCourse(event.target.value); } catch (error) { toast(error.message, true); } });
 $('#attendance-button').addEventListener('click', async () => { try { await api('/api/student/attendance', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ lessonId: studentState.lessonId }) }); toast('签到成功'); await load(); } catch (error) { toast(error.message, true); } });
 $('#student-logout').addEventListener('click', async () => { await api('/api/auth/logout', { method: 'POST' }); location.reload(); });
 $('#student-courseware-close').addEventListener('click', () => $('#student-courseware-preview').close());
-$('#student-login-form').addEventListener('submit', async (event) => { event.preventDefault(); try { await api('/api/auth/student', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(Object.fromEntries(new FormData(event.currentTarget))) }); $('#student-login').close(); await load(); } catch (error) { toast(error.message, true); } });
-(async function boot() { const auth = await api('/api/auth/status'); if (auth.role === 'student') return load(); const [classes, catalog] = await Promise.all([api('/api/public/classes'), api('/api/public/courses')]); $('#student-class-select').innerHTML += classes.classes.map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join(''); $('#student-login-course-select').innerHTML += catalog.courses.map((item) => `<option value="${esc(item.id)}">${esc(item.label)}</option>`).join(''); $('#student-login-course-select').disabled = !catalog.courses.length; $('#student-login-form button').disabled = !catalog.courses.length; $('#student-login').showModal(); })().catch((error) => toast(error.message, true));
+$('#student-login-form').addEventListener('submit', async (event) => { event.preventDefault(); const selected = studentState.loginCatalog.find((item) => item.id === $('#student-class-select').value); try { await api('/api/auth/student', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: new FormData(event.currentTarget).get('studentId'), courseId: selected?.id || '', className: selected?.className || '' }) }); studentState.courseName = selected?.courseName || ''; $('#student-login').close(); await load(); } catch (error) { toast(error.message, true); } });
+$('#student-login-course-select').addEventListener('change', (event) => renderLoginClasses(event.target.value));
+(async function boot() { const auth = await api('/api/auth/status'); if (auth.role === 'student') return load(); const catalog = await api('/api/public/courses'); studentState.loginCatalog = catalog.courses; const names = courseNames(catalog.courses); $('#student-login-course-select').innerHTML = names.length ? `<option value="">请选择课程</option>${names.map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join('')}` : '<option value="">暂无已发布课程</option>'; $('#student-login-course-select').disabled = !names.length; $('#student-login-form button').disabled = true; $('#student-login').showModal(); })().catch((error) => toast(error.message, true));

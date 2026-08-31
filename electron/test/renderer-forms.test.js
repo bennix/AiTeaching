@@ -93,9 +93,13 @@ test('student page selects an existing course and shows all course materials', (
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'student.html'), 'utf8');
   const studentSource = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'student.js'), 'utf8');
   assert.match(html, /id="student-login-course-select"/);
+  assert.match(html, /id="student-class-select"/);
   assert.match(html, /id="student-course-select"/);
+  assert.match(html, /id="student-course-class-select"/);
   assert.match(studentSource, /api\('\/api\/public\/courses'\)/);
   assert.match(studentSource, /api\('\/api\/student\/course'/);
+  assert.match(studentSource, /function classesForCourse\(/);
+  assert.match(studentSource, /renderLoginClasses/);
   assert.match(studentSource, /data\.materials\.map/);
   assert.doesNotMatch(studentSource, /data\.materials\.filter\(\(item\) => !lesson/);
 });
@@ -133,6 +137,10 @@ test('teacher student directory separates classes and only renders the selected 
   assert.match(source, /state\.activeStudentClassKey/);
   assert.match(source, /selectedGroup\.students\.map/);
   assert.match(source, /data-student-class-key/);
+  assert.match(html, /id="delete-selected-class"/);
+  assert.match(html, /id="delete-selected-course"/);
+  assert.match(source, /api\('\/api\/classes\/delete'/);
+  assert.match(source, /api\('\/api\/courses\/delete'/);
 });
 
 test('teacher lesson directory groups teaching weeks by course and linked classes', () => {

@@ -248,6 +248,8 @@ function renderStudents() {
   $('#active-student-class-meta').textContent = selectedGroup
     ? `${selectedGroup.courseName || '未指定课程'} · ${selectedGroup.count} 名学生${selectedGroup.term ? ` · ${selectedGroup.term}` : ''}`
     : '请先添加学生或导入选课单';
+  $('#delete-selected-class').disabled = !selectedGroup?.courseName || !selectedGroup?.className;
+  $('#delete-selected-course').disabled = !selectedGroup?.courseName;
   $('#student-list').innerHTML = selectedGroup ? selectedGroup.students.map((student) => `
     <article class="student-card">
       <div><h3>${escapeHtml(student.name)} <span class="badge">${escapeHtml(student.studentId)}</span></h3><p>${escapeHtml(student.courseName || '未指定课程')} · ${escapeHtml(student.className || '未分班')} · ${escapeHtml(student.email || '未填写邮箱')}</p></div>
@@ -638,6 +640,43 @@ $('#batch-delete-button').addEventListener('click', async () => {
     await refresh();
   } catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
+});
+
+$('#delete-selected-class').addEventListener('click', async (event) => {
+  const selected = studentClassGroups(state.data?.students || []).find((group) => group.key === state.activeStudentClassKey);
+  if (!selected || !confirm(`确认永久删除“${selected.courseName} / ${selected.className}”？\n\n将删除该班 ${selected.count} 名学生及其作答、签到、个性化习题、报告和班级资料，并解除所有教案中的该班级关联。此操作无法撤销。`)) return;
+  event.currentTarget.disabled = true;
+  try {
+    const result = await api('/api/classes/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courseName: selected.courseName, className: selected.className }),
+    });
+    state.activeStudentClassKey = '';
+    toast(`已删除班级和 ${result.deleted.students} 名学生`);
+    await refresh();
+  } catch (error) { toast(error.message, true); }
+  finally { event.currentTarget.disabled = false; }
+});
+
+$('#delete-selected-course').addEventListener('click', async (event) => {
+  const selected = studentClassGroups(state.data?.students || []).find((group) => group.key === state.activeStudentClassKey);
+  if (!selected) return;
+  const courseGroups = studentClassGroups(state.data?.students || []).filter((group) => group.courseName === selected.courseName);
+  const studentCount = courseGroups.reduce((sum, group) => sum + group.count, 0);
+  const lessonCount = (state.data?.lessons || []).filter((lesson) => lesson.courseName === selected.courseName).length;
+  if (!confirm(`确认永久删除整门课程“${selected.courseName}”？\n\n将删除 ${courseGroups.length} 个班级、${studentCount} 名学生、${lessonCount} 个教学周，以及关联题库、作答、签到、课件、资料和报告。此操作无法撤销。`)) return;
+  event.currentTarget.disabled = true;
+  try {
+    const result = await api('/api/courses/delete', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ courseName: selected.courseName }),
+    });
+    state.activeStudentClassKey = '';
+    state.activeLessonGroupKey = '';
+    toast(`已删除课程、${result.deleted.lessons} 个教学周和 ${result.deleted.students} 名学生`);
+    await refresh();
+  } catch (error) { toast(error.message, true); }
+  finally { event.currentTarget.disabled = false; }
 });
 
 $$('input[name="scope"]').forEach((radio) => radio.addEventListener('change', () => {

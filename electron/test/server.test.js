@@ -90,6 +90,8 @@ test('学生可以选择已有课程并只读取所选课程的资料与已发�
   context.after(() => server.close());
   const base = `http://127.0.0.1:${server.port}`;
   server.store.upsertStudent({ studentId: 'S002', name: '跨课程学生', courseName: '旧课程', className: '学生行政班' });
+  server.store.upsertStudent({ studentId: 'M001', name: '数学班学生', courseName: '高一数学', className: '数学测试班' });
+  server.store.upsertStudent({ studentId: 'E001', name: '英语班学生', courseName: '高一英语', className: '英语测试班' });
   const lessons = [
     { id: 'math-lesson', title: '高一数学 · 第 1 周', courseName: '高一数学', className: '数学测试班', teachingWeek: 1, totalWeeks: 15, date: '2026-09-01', status: 'done', aiResult: '集合与函数', createdAt: '2026-09-01T00:00:00.000Z' },
     { id: 'english-lesson', title: '高一英语 · 第 1 周', courseName: '高一英语', className: '英语测试班', teachingWeek: 1, totalWeeks: 15, date: '2026-09-01', status: 'done', aiResult: 'Vocabulary', createdAt: '2026-09-01T00:00:00.000Z' },
@@ -129,6 +131,52 @@ test('学生可以选择已有课程并只读取所选课程的资料与已发�
   assert.deepEqual(englishState.body.materials.map((item) => item.id), ['english-material']);
   const crossCourseSubmit = await json(`${base}/api/student/submit`, { method: 'POST', headers: { Cookie: studentCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseId: 'math-exercise', answer: 'A' }) });
   assert.equal(crossCourseSubmit.response.status, 400);
+});
+
+test('学生目录只显示仍存在的课程班级，教师可删除班级或整门课程', async (context) => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-delete-catalog-'));
+  const rendererDir = path.join(__dirname, '..', 'renderer');
+  const server = await createLanServer({ runtimeDir, rendererDir, preferredPort: 0 });
+  context.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const login = await json(`${base}/api/auth/admin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'admin' }) });
+  const adminCookie = login.response.headers.get('set-cookie').split(';')[0];
+  server.store.upsertStudent({ studentId: 'M1', name: '数学生', courseName: '数学', className: '一班' });
+  server.store.upsertStudent({ studentId: 'E1', name: '英语生', courseName: '英语', className: '二班' });
+  server.store.addLessons([
+    { id: 'math', courseName: '数学', className: '一班', classNames: ['一班'], status: 'done', createdAt: '2026-09-01' },
+    { id: 'english', courseName: '英语', className: '二班', classNames: ['二班'], status: 'done', createdAt: '2026-09-01' },
+    { id: 'stale', courseName: '已删除课程', className: '旧班', classNames: ['旧班'], status: 'done', createdAt: '2026-09-01' },
+  ]);
+
+  const catalog = await json(`${base}/api/public/courses`);
+  assert.deepEqual(catalog.body.courses.map((item) => item.label), ['数学 · 一班', '英语 · 二班']);
+  const mathCourse = catalog.body.courses.find((item) => item.courseName === '数学');
+  const studentLogin = await json(`${base}/api/auth/student`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ studentId: 'M1', className: '一班', courseId: mathCourse.id }),
+  });
+  const studentCookie = studentLogin.response.headers.get('set-cookie').split(';')[0];
+  const deletedClass = await json(`${base}/api/classes/delete`, {
+    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ courseName: '数学', className: '一班' }),
+  });
+  assert.deepEqual(deletedClass.body.deleted, { students: 1, lessons: 1, materials: 0 });
+  assert.deepEqual(server.store.getLesson('math').classNames, []);
+  const afterClass = await json(`${base}/api/public/courses`);
+  assert.deepEqual(afterClass.body.courses.map((item) => item.label), ['英语 · 二班']);
+  const deletedStudentState = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
+  assert.equal(deletedStudentState.response.status, 401);
+  assert.match(deletedStudentState.body.error, /已被删除/);
+
+  const deletedCourse = await json(`${base}/api/courses/delete`, {
+    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ courseName: '英语' }),
+  });
+  assert.deepEqual(deletedCourse.body.deleted, { lessons: 1, students: 1, materials: 0 });
+  assert.equal(server.store.getLesson('english'), null);
+  const afterCourse = await json(`${base}/api/public/courses`);
+  assert.deepEqual(afterCourse.body.courses, []);
 });
 
 test('教师可以查看班级学情图表数据并生成可保存的 AI 报告', async (context) => {

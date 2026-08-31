@@ -398,6 +398,63 @@ class JsonStore {
     this.save();
   }
 
+  deleteClass(courseName, className) {
+    const normalizedCourse = String(courseName || '').trim();
+    const normalizedClass = String(className || '').trim();
+    if (!normalizedCourse || !normalizedClass) throw new Error('课程和班级不能为空');
+    const studentIds = new Set(this.state.students
+      .filter((item) => item.courseName === normalizedCourse && item.className === normalizedClass)
+      .map((item) => item.studentId));
+    const relatedMaterials = this.state.classMaterials
+      .filter((item) => item.courseName === normalizedCourse && item.className === normalizedClass);
+
+    this.state.students = this.state.students.filter((item) => !(item.courseName === normalizedCourse && item.className === normalizedClass));
+    this.state.submissions = this.state.submissions.filter((item) => !studentIds.has(item.studentId));
+    this.state.attendance = this.state.attendance.filter((item) => !studentIds.has(item.studentId));
+    this.state.exercises = this.state.exercises.filter((item) => !studentIds.has(item.targetStudentId));
+    this.state.studentReports = this.state.studentReports.filter((item) => !studentIds.has(item.studentId));
+    this.state.classReports = this.state.classReports.filter((item) => !(item.courseName === normalizedCourse && item.className === normalizedClass));
+    this.state.classMaterials = this.state.classMaterials.filter((item) => !(item.courseName === normalizedCourse && item.className === normalizedClass));
+    let unlinkedLessons = 0;
+    for (const lesson of this.state.lessons.filter((item) => item.courseName === normalizedCourse)) {
+      const names = [...new Set([...(Array.isArray(lesson.classNames) ? lesson.classNames : []), lesson.className]
+        .map((item) => String(item || '').trim()).filter(Boolean))];
+      if (!names.includes(normalizedClass)) continue;
+      const remaining = names.filter((item) => item !== normalizedClass);
+      lesson.classNames = remaining;
+      lesson.className = remaining[0] || '';
+      lesson.updatedAt = new Date().toISOString();
+      unlinkedLessons += 1;
+    }
+    for (const material of relatedMaterials) {
+      try { if (material.filePath && fs.existsSync(material.filePath)) fs.unlinkSync(material.filePath); } catch { /* Missing class files must not block deleting the class. */ }
+    }
+    this.save();
+    return { students: studentIds.size, lessons: unlinkedLessons, materials: relatedMaterials.length };
+  }
+
+  deleteCourse(courseName) {
+    const normalizedCourse = String(courseName || '').trim();
+    if (!normalizedCourse) throw new Error('课程不能为空');
+    const lessonIds = this.state.lessons.filter((item) => item.courseName === normalizedCourse).map((item) => item.id);
+    const studentIds = new Set(this.state.students.filter((item) => item.courseName === normalizedCourse).map((item) => item.studentId));
+    const relatedMaterials = this.state.classMaterials.filter((item) => item.courseName === normalizedCourse);
+    const deletedLessons = this.deleteLessons(lessonIds);
+
+    this.state.students = this.state.students.filter((item) => item.courseName !== normalizedCourse);
+    this.state.submissions = this.state.submissions.filter((item) => !studentIds.has(item.studentId));
+    this.state.attendance = this.state.attendance.filter((item) => !studentIds.has(item.studentId));
+    this.state.exercises = this.state.exercises.filter((item) => !studentIds.has(item.targetStudentId));
+    this.state.studentReports = this.state.studentReports.filter((item) => !studentIds.has(item.studentId));
+    this.state.classReports = this.state.classReports.filter((item) => item.courseName !== normalizedCourse);
+    this.state.classMaterials = this.state.classMaterials.filter((item) => item.courseName !== normalizedCourse);
+    for (const material of relatedMaterials) {
+      try { if (material.filePath && fs.existsSync(material.filePath)) fs.unlinkSync(material.filePath); } catch { /* Missing course files must not block deleting the course. */ }
+    }
+    this.save();
+    return { lessons: deletedLessons, students: studentIds.size, materials: relatedMaterials.length };
+  }
+
   addExercises(items) { this.state.exercises.push(...items); this.save(); }
   updateExercise(id, changes) { const item = this.state.exercises.find((row) => row.id === id); if (!item) return null; Object.assign(item, changes); this.save(); return item; }
   addSubmission(item) { this.state.submissions.push(item); this.save(); }
