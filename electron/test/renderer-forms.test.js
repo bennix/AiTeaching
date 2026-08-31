@@ -68,6 +68,14 @@ test('exercise generator reports missing types and keeps its action in a separat
   assert.match(css, /\.exercise-generator\s*\{[^}]*grid-template-columns:\s*minmax\(0, 1fr\)/s);
 });
 
+test('completed question banks are derived from actual counts and clearly shown as complete', () => {
+  assert.match(source, /warning && !exerciseComplete/);
+  assert.match(source, /lesson\.exerciseCoverage\?\.complete/);
+  assert.match(source, /state\.activeLesson\.exerciseCoverage\?\.complete \? '' : state\.activeLesson\.warning/);
+  assert.match(source, /题库已达到设定数量/);
+  assert.match(source, /超过目标的题目会继续保留/);
+});
+
 test('question bank rerenders live exercise batches from the lesson event stream', () => {
   assert.match(source, /\['ai', 'exercises'\]\.includes\(state\.activeTab\)/);
   assert.match(source, /正在生成\$\{exerciseTypeLabel\(progress\.type\)\}/);

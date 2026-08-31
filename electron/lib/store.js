@@ -37,6 +37,30 @@ function clone(value) {
   return JSON.parse(JSON.stringify(value));
 }
 
+function exerciseCoverageForLesson(lesson, exercises) {
+  const configs = Array.isArray(lesson?.exerciseOptions?.typeConfigs) ? lesson.exerciseOptions.typeConfigs : [];
+  const counts = new Map();
+  for (const exercise of exercises) {
+    if (exercise.lessonId !== lesson.id || exercise.targetStudentId) continue;
+    const type = exercise.type === 'coding' ? 'application' : exercise.type;
+    counts.set(type, (counts.get(type) || 0) + 1);
+  }
+  const rows = configs
+    .map((item) => ({
+      type: item?.type === 'coding' ? 'application' : item?.type,
+      expected: Math.max(0, Number(item?.count) || 0),
+    }))
+    .filter((item) => item.type && item.expected > 0)
+    .map((item) => ({ ...item, actual: counts.get(item.type) || 0 }));
+  return {
+    configured: rows.length > 0,
+    complete: rows.length > 0 && rows.every((item) => item.actual >= item.expected),
+    expectedTotal: rows.reduce((sum, item) => sum + item.expected, 0),
+    actualTotal: [...counts.values()].reduce((sum, count) => sum + count, 0),
+    rows,
+  };
+}
+
 class JsonStore {
   constructor(runtimeDir) {
     this.runtimeDir = runtimeDir;
@@ -267,7 +291,11 @@ class JsonStore {
 
   listLessons() {
     return this.state.lessons
-      .map(({ rawText, sourceStoredName, ...item }) => ({ ...item, sourceLength: String(rawText || '').length }))
+      .map(({ rawText, sourceStoredName, ...item }) => ({
+        ...item,
+        sourceLength: String(rawText || '').length,
+        exerciseCoverage: exerciseCoverageForLesson(item, this.state.exercises),
+      }))
       .sort((a, b) => String(b.date).localeCompare(String(a.date)) || b.createdAt.localeCompare(a.createdAt));
   }
 
@@ -283,7 +311,14 @@ class JsonStore {
     const attendance = this.state.attendance.filter((item) => item.lessonId === id);
     const materials = this.state.materials.filter((item) => item.lessonId === id);
     const { sourceStoredName, ...visibleLesson } = lesson;
-    return { ...visibleLesson, exercises, submissions, attendance, materials };
+    return {
+      ...visibleLesson,
+      exercises,
+      submissions,
+      attendance,
+      materials,
+      exerciseCoverage: exerciseCoverageForLesson(lesson, this.state.exercises),
+    };
   }
 
   addLessons(lessons) {

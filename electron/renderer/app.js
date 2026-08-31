@@ -39,9 +39,9 @@ function showView(name) {
   if (name === 'analytics') loadAnalytics().catch((error) => toast(error.message, true));
 }
 
-function statusLabel(status, stage, warning = '') {
+function statusLabel(status, stage, warning = '', exerciseComplete = false) {
   if (status === 'processing') return stage === 'exercises' ? '● 正在生成题库' : '● 正在流式整理';
-  if (status === 'done' && warning) return '✓ 方案完成 · 题库需补充';
+  if (status === 'done' && warning && !exerciseComplete) return '✓ 方案完成 · 题库需补充';
   return { done: '✓ 方案与题库已完成', queued: '◷ 排队中', blocked: '! 等待前序周', error: '! 处理失败', ready: '等待 API Key' }[status] || status;
 }
 
@@ -156,7 +156,7 @@ function renderLessons() {
       ${state.batchMode ? `<label class="lesson-select"><input type="checkbox" data-select-lesson="${escapeHtml(lesson.id)}" ${state.selectedLessonIds.has(lesson.id) ? 'checked' : ''} aria-label="选择第 ${escapeHtml(lesson.teachingWeek)} 周"></label>` : ''}
       <div class="week-badge">第 ${escapeHtml(lesson.teachingWeek)} 周</div>
       <div><h3>${escapeHtml(lesson.title)}</h3><p>${escapeHtml(lesson.courseName || '未填写课程')}${lessonClassLabel(lesson) ? ` · ${escapeHtml(lessonClassLabel(lesson))}` : ''} · ${escapeHtml(lesson.sourceFilename)}</p></div>
-      <span class="status ${escapeHtml(lesson.status)}">${escapeHtml(statusLabel(lesson.status, lesson.processingStage, lesson.warning))}</span>
+      <span class="status ${escapeHtml(lesson.status)}">${escapeHtml(statusLabel(lesson.status, lesson.processingStage, lesson.warning, lesson.exerciseCoverage?.complete))}</span>
       <span class="date">${escapeHtml(lesson.date || '')}</span>
     </article>`).join('') : '<div class="empty">还没有教案。请先导入一个教学周或整学期教案。</div>';
   $$('[data-lesson-group-key]').forEach((button) => button.addEventListener('click', () => {
@@ -422,10 +422,11 @@ async function openLesson(id, activeTab = 'ai') {
   $('#dialog-week').textContent = `第 ${state.activeLesson.teachingWeek}/${state.activeLesson.totalWeeks} 周`;
   $('#dialog-title').textContent = state.activeLesson.title;
   $('#dialog-meta').textContent = `${state.activeLesson.courseName || '未填写课程'}${lessonClassLabel(state.activeLesson) ? ` · ${lessonClassLabel(state.activeLesson)}` : ''} · ${state.activeLesson.date || '未填写日期'} · ${state.activeLesson.sourceFilename}`;
-  const notice = state.activeLesson.error || state.activeLesson.warning || '';
+  const effectiveWarning = state.activeLesson.exerciseCoverage?.complete ? '' : state.activeLesson.warning;
+  const notice = state.activeLesson.error || effectiveWarning || '';
   $('#dialog-error').hidden = !notice;
   $('#dialog-error').textContent = notice;
-  $('#dialog-error').classList.toggle('warning', Boolean(state.activeLesson.warning && !state.activeLesson.error));
+  $('#dialog-error').classList.toggle('warning', Boolean(effectiveWarning && !state.activeLesson.error));
   $('#courseware-button').textContent = state.activeLesson.materials?.some((item) => item.type === 'ai_generated') ? '重新生成 AI 课件' : '生成 AI 课件';
   $$('.tab').forEach((tab) => tab.classList.toggle('active', tab.dataset.tab === activeTab));
   renderDialogContent();
@@ -468,6 +469,7 @@ function exerciseCoverage(exercises, configured) {
     rows,
     missing: rows.filter((item) => item.actual < item.expected),
     missingConfigs: rows.map((item) => ({ type: item.value, count: Math.max(0, item.expected - item.actual), difficulty: item.difficulty })),
+    complete: rows.every((item) => item.actual >= item.expected),
   };
 }
 
@@ -499,10 +501,10 @@ function renderDialogContent() {
       ? `正在由独立模型复核 ${progress.candidateCount || 0} 道${exerciseTypeLabel(progress.type)}：已通过 ${progress.actual}/${progress.expected} 道`
       : (progress ? `正在生成${exerciseTypeLabel(progress.type)}：本批已通过 ${progress.actual}/${progress.expected} 道` : '正在连接 AI 并准备本周题库…');
     content.innerHTML = `<form id="exercise-generator-form" class="exercise-generator">
-      <div class="exercise-generator-heading"><strong>${generating ? '正在生成本周题库' : (coverage.missing.length ? '补齐当前章节题库' : '为当前章节继续出题')}</strong><small>${escapeHtml(coverageText)}</small></div>
-      ${generating ? `<div class="exercise-live-progress"><span class="streaming-dot"></span><strong>${escapeHtml(progressText)}</strong><small>已完成的题目会立即显示在下方，无需离开或刷新页面。</small></div>` : (coverage.missing.length ? `<div class="exercise-coverage-warning">当前题库还缺：${escapeHtml(coverage.missing.map((item) => `${item.label} ${item.expected - item.actual} 道`).join('、'))}。下方已自动填写缺少数量。</div>` : '')}
+      <div class="exercise-generator-heading"><strong>${generating ? '正在生成本周题库' : (coverage.complete ? '题库已达到设定数量' : '补齐当前章节题库')}</strong><small>${escapeHtml(coverageText)}</small></div>
+      ${generating ? `<div class="exercise-live-progress"><span class="streaming-dot"></span><strong>${escapeHtml(progressText)}</strong><small>已完成的题目会立即显示在下方，无需离开或刷新页面。</small></div>` : (coverage.missing.length ? `<div class="exercise-coverage-warning">当前题库还缺：${escapeHtml(coverage.missing.map((item) => `${item.label} ${item.expected - item.actual} 道`).join('、'))}。下方已自动填写缺少数量。</div>` : `<div class="exercise-coverage-success">已按题型达到目标：${escapeHtml(coverageText)}。超过目标的题目会继续保留；如需额外出题，可在下方重新设置追加数量。</div>`)}
       <div class="exercise-config-grid">${exerciseConfigRows('manual_', formConfigs)}</div>
-      <div class="exercise-generator-actions"><small>每种题型可分别设置数量与难度，单次合计不超过 30 道</small><button class="button primary" type="submit" ${generating ? 'disabled' : ''}>${generating ? '题库生成中…' : (coverage.missing.length ? '补齐缺少题目' : '确认参数并生成')}</button></div>
+      <div class="exercise-generator-actions"><small>每种题型可分别设置数量与难度，单次合计不超过 30 道</small><button class="button primary" type="submit" ${generating ? 'disabled' : ''}>${generating ? '题库生成中…' : (coverage.missing.length ? '补齐缺少题目' : '继续追加题目')}</button></div>
     </form><div class="exercise-list">${exercises.length ? exercises.map((item, index) => `<div class="exercise-item"><div class="exercise-meta"><span class="badge">${escapeHtml(exerciseTypeLabel(item.type))}</span><span>${escapeHtml(item.difficulty)}</span><span>${escapeHtml(item.knowledgePoint || '')}</span>${item.reviewedBy ? '<span class="badge success">双解 · 独立复核通过</span>' : ''}<span>${item.published ? '已发放' : '待发放'}</span></div><div class="exercise-question"><span class="exercise-index">${index + 1}</span><div class="markdown-body">${richHtml(item.question)}</div></div><div class="muted answer-block"><strong>参考答案：</strong><div class="markdown-body">${richHtml(item.answer)}</div></div>${item.reviewedBy ? `<details class="exercise-review-details"><summary>查看两种解法与复核记录</summary><div><strong>解法一</strong><div class="markdown-body">${richHtml(item.solutionOne)}</div><strong>解法二</strong><div class="markdown-body">${richHtml(item.solutionTwo)}</div><strong>独立复核</strong><div class="markdown-body">${richHtml(item.reviewReason)}</div><small>复核模型：${escapeHtml(item.reviewedBy)}</small></div></details>` : ''}<div class="exercise-actions"><button class="button ${item.published ? 'danger' : 'primary'}" data-toggle-exercise="${escapeHtml(item.id)}" data-published="${item.published}">${item.published ? '撤回' : '发放'}</button></div></div>`).join('') : `<div class="empty">${generating ? '<strong>AI 正在生成并复核第一批题目…</strong><br>只有复核通过的题目会自动出现在这里。' : '暂无题目，请在上方选择参数后生成。'}</div>`}</div>`;
     RichText.typeset(content);
     $('#exercise-generator-form').addEventListener('submit', async (event) => {
@@ -522,6 +524,15 @@ function renderDialogContent() {
         const result = await request;
         toast(result.warning || `已生成 ${result.exercises.length} 道题`, false, Boolean(result.warning));
         state.activeLesson = await api(`/api/lessons/${encodeURIComponent(lesson.id)}`);
+        const listItem = state.data?.lessons?.find((item) => item.id === lesson.id);
+        if (listItem) Object.assign(listItem, {
+          status: state.activeLesson.status,
+          processingStage: state.activeLesson.processingStage,
+          warning: state.activeLesson.warning,
+          error: state.activeLesson.error,
+          exerciseCoverage: state.activeLesson.exerciseCoverage,
+        });
+        renderLessons();
         state.activeTab = 'exercises';
         renderDialogContent();
       } catch (error) { toast(error.message, true); }

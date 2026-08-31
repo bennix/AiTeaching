@@ -120,6 +120,36 @@ test('loading existing data repairs a completed plan incorrectly marked failed b
   assert.equal(reloaded.state.lessons[0].planCompletedAt, '2026-08-30T00:00:00.000Z');
 });
 
+test('lesson summaries report question bank completion from actual per-type counts', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-coverage-'));
+  const store = new JsonStore(runtimeDir);
+  store.state.lessons.push({
+    id: 'lesson-coverage', status: 'done', warning: '历史补题提示',
+    exerciseOptions: { typeConfigs: [
+      { type: 'choice', count: 4 },
+      { type: 'short_answer', count: 2 },
+      { type: 'application', count: 1 },
+    ] },
+  });
+  store.state.exercises.push(
+    ...Array.from({ length: 8 }, (_, index) => ({ id: `choice-${index}`, lessonId: 'lesson-coverage', type: 'choice' })),
+    ...Array.from({ length: 4 }, (_, index) => ({ id: `short-${index}`, lessonId: 'lesson-coverage', type: 'short_answer' })),
+    ...Array.from({ length: 2 }, (_, index) => ({ id: `application-${index}`, lessonId: 'lesson-coverage', type: 'application' })),
+    { id: 'personal', lessonId: 'lesson-coverage', type: 'choice', targetStudentId: 'S001' },
+  );
+
+  const summary = store.listLessons()[0].exerciseCoverage;
+  assert.equal(summary.complete, true);
+  assert.equal(summary.actualTotal, 14);
+  assert.equal(summary.expectedTotal, 7);
+  assert.deepEqual(summary.rows.map(({ type, actual, expected }) => ({ type, actual, expected })), [
+    { type: 'choice', actual: 8, expected: 4 },
+    { type: 'short_answer', actual: 4, expected: 2 },
+    { type: 'application', actual: 2, expected: 1 },
+  ]);
+  assert.deepEqual(store.getLessonDetail('lesson-coverage').exerciseCoverage, summary);
+});
+
 test('opening existing data creates a daily upgrade-safe snapshot outside the app bundle', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-backup-'));
   const store = new JsonStore(runtimeDir);

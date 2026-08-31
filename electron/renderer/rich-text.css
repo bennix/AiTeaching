@@ -101,6 +101,7 @@
 .exercise-generator small { color: #7d879a; display: block; margin-top: 4px; }
 .exercise-generator-heading { display: flex; justify-content: space-between; gap: 18px; }
 .exercise-coverage-warning { background: #fff8e8; border: 1px solid #f2d89c; border-radius: 9px; color: #8a5b00; font-size: 13px; padding: 10px 12px; }
+.exercise-coverage-success { background: #edf9f3; border: 1px solid #bfe8d2; border-radius: 9px; color: #147452; font-size: 13px; padding: 10px 12px; }
 .exercise-live-progress {
   align-items: center;
   background: #eeecff;
