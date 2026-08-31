@@ -187,11 +187,27 @@ function renderSettings() {
   form.gradingModel.value = settings.gradingModel || settings.model || '';
   form.attendanceTimeoutMinutes.value = settings.attendanceTimeoutMinutes || 1440;
   $('#key-status').textContent = settings.hasApiKey ? '已保存加密 API Key；留空不会覆盖' : '尚未保存 API Key';
-  $('#model-options').innerHTML = (settings.modelOptions || []).map((model) => `<option value="${escapeHtml(model)}"></option>`).join('');
+  renderModelSelectors(settings);
   updateApiKeyInvite();
   const mailForm = $('#mail-form');
   for (const [key, value] of Object.entries(settings.mail || {})) if (mailForm.elements[key] && key !== 'password') mailForm.elements[key].value = value || '';
   mailForm.password.placeholder = settings.mail?.hasPassword ? '已保存；留空保留当前值' : '请输入授权码 / 密码';
+}
+
+function renderModelSelectors(settings) {
+  const models = [...new Set((settings.modelOptions || []).map((model) => String(model || '').trim()).filter(Boolean))];
+  const options = models.map((model) => `<option value="${escapeHtml(model)}">${escapeHtml(model)}</option>`).join('');
+  const mainSelect = $('#model-options-select');
+  const gradingSelect = $('#grading-model-options-select');
+  mainSelect.innerHTML = `<option value="">${models.length ? `请选择已获取的适用模型（${models.length} 个）` : '尚未获取模型列表'}</option>${options}`;
+  gradingSelect.innerHTML = `<option value="">使用主模型</option>${options}`;
+  mainSelect.value = models.includes(settings.model) ? settings.model : '';
+  const gradingModel = settings.gradingModel || settings.model || '';
+  gradingSelect.value = models.includes(gradingModel) ? gradingModel : '';
+}
+
+function syncModelSelect(input, select) {
+  select.value = [...select.options].some((option) => option.value === input.value) ? input.value : '';
 }
 
 function isZenMuxBaseUrl(value) {
@@ -755,6 +771,7 @@ $('#models-button').addEventListener('click', async (event) => {
     await refresh();
     $('#model-filter-status').childNodes[0].textContent = `已获取 ${result.models.length} 个适用模型，已排除 ${result.excluded} 个不适合教学工作流的模型。`;
     toast(`已获取 ${result.models.length} 个适用模型，已排除 ${result.excluded} 个不适合教学工作流的模型`);
+    $('#model-options-select').focus();
   }
   catch (error) { toast(error.message, true); }
   finally { button.disabled = false; button.textContent = '获取适用模型'; }
@@ -762,6 +779,14 @@ $('#models-button').addEventListener('click', async (event) => {
 
 $('#settings-form').baseUrl.addEventListener('input', updateApiKeyInvite);
 $('#settings-form').apiKey.addEventListener('input', updateApiKeyInvite);
+$('#model-options-select').addEventListener('change', (event) => {
+  if (event.currentTarget.value) $('#settings-form').model.value = event.currentTarget.value;
+});
+$('#grading-model-options-select').addEventListener('change', (event) => {
+  $('#settings-form').gradingModel.value = event.currentTarget.value;
+});
+$('#settings-form').model.addEventListener('input', (event) => syncModelSelect(event.currentTarget, $('#model-options-select')));
+$('#settings-form').gradingModel.addEventListener('input', (event) => syncModelSelect(event.currentTarget, $('#grading-model-options-select')));
 
 $('#dialog-close').addEventListener('click', () => { closeLessonStream(); $('#lesson-dialog').close(); });
 $('#report-close').addEventListener('click', () => $('#report-dialog').close());

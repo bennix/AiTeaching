@@ -35,8 +35,15 @@ test('teacher settings shows the ZenMux invite only when no API key is configure
 test('teacher model picker explains and requests application-capable models', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
   assert.match(html, /id="model-filter-status"/);
+  assert.match(html, /<select id="model-options-select"/);
+  assert.match(html, /<select id="grading-model-options-select"/);
+  assert.doesNotMatch(html, /<datalist id="model-options"/);
   assert.match(html, /支持文本输入与文本输出/);
   assert.match(html, /href="https:\/\/zenmux\.ai\/models"/);
+  assert.match(source, /function renderModelSelectors\(/);
+  assert.match(source, /请选择已获取的适用模型（\$\{models\.length\} 个）/);
+  assert.match(source, /model-options-select'\)\.addEventListener\('change'/);
+  assert.match(source, /grading-model-options-select'\)\.addEventListener\('change'/);
   assert.match(source, /baseUrl: formElement\.baseUrl\.value/);
   assert.match(source, /已排除.*不适合教学工作流/);
 });
