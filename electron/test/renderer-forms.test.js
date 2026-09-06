@@ -159,7 +159,7 @@ test('teacher lesson directory groups teaching weeks by course and linked classe
   assert.match(css, /\.lesson-group-item\.active\s*\{/);
   assert.match(css, /\.batch-toolbar\[hidden\]\s*\{display:none\}/);
 
-  const functionStart = source.indexOf('function lessonGroups(');
+  const functionStart = source.indexOf('const catalogNameKey');
   const functionEnd = source.indexOf('\nfunction activeLessonGroup(', functionStart);
   const groupLessons = Function(`${source.slice(functionStart, functionEnd)}; return lessonGroups;`)();
   const groups = groupLessons([

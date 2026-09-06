@@ -137,6 +137,24 @@ test('deleting a course cascades through lessons, classes and course resources',
   assert.deepEqual(store.state.submissions.map((item) => item.id), ['english-submission']);
 });
 
+test('deleting course and class also matches harmless formatting differences', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-delete-normalized-'));
+  const store = new JsonStore(runtimeDir);
+  store.state.students.push({ studentId: 'P1', courseName: 'Python程序设计', className: '教学班 AIB110002.02' });
+  store.state.lessons.push({ id: 'python', courseName: 'Python 程序设计', className: '教学班 AIB110002.02', classNames: ['教学班 AIB110002.02'] });
+  store.save();
+
+  assert.deepEqual(store.deleteCourse('Python 程序设计'), { lessons: 1, students: 1, materials: 0 });
+  assert.deepEqual(store.state.lessons, []);
+  assert.deepEqual(store.state.students, []);
+
+  store.state.students.push({ studentId: 'M1', courseName: '高一数学', className: '高一（2）' });
+  store.state.lessons.push({ id: 'math', courseName: '高一数学', className: '高一（2））', classNames: ['高一（2））'] });
+  store.save();
+  assert.deepEqual(store.deleteClass('高一数学', '高一（2）'), { students: 1, lessons: 1, materials: 0 });
+  assert.deepEqual(store.state.lessons[0].classNames, []);
+});
+
 test('loading existing data keeps only the latest AI courseware for each lesson', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-courseware-'));
   const store = new JsonStore(runtimeDir);

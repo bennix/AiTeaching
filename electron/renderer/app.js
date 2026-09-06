@@ -13,6 +13,13 @@ const $$ = (selector) => [...document.querySelectorAll(selector)];
 const escapeHtml = (value) => String(value ?? '').replace(/[&<>'"]/g, (char) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', "'": '&#39;', '"': '&quot;' }[char]));
 const richHtml = (value, options) => RichText.html(value, options);
 const exerciseTypeLabel = (type) => ({ choice: '选择题', short_answer: '简答题', application: '实践 / 应用题', coding: '编程题（旧数据）' }[type] || type);
+const catalogNameKey = (value) => String(value || '').normalize('NFKC').trim().toLocaleLowerCase('zh-CN').replace(/\s+/gu, '').replace(/[‐‑‒–—﹣－]/gu, '-').replace(/\({2,}/gu, '(').replace(/\){2,}/gu, ')');
+const uniqueCatalogNames = (values) => [...values.reduce((map, value) => {
+  const name = String(value || '').trim();
+  const key = catalogNameKey(name);
+  if (key && !map.has(key)) map.set(key, name);
+  return map;
+}, new Map()).values()];
 
 async function api(url, options = {}) {
   const response = await fetch(url, options);
@@ -47,17 +54,16 @@ function statusLabel(status, stage, warning = '', exerciseComplete = false) {
 
 function lessonClassLabel(lesson) {
   const names = [...(Array.isArray(lesson.classNames) ? lesson.classNames : []), lesson.className];
-  return [...new Set(names.map((item) => String(item || '').trim()).filter(Boolean))].join('、');
+  return uniqueCatalogNames(names).join('、');
 }
 
 function lessonGroups(lessons = []) {
   const groups = new Map();
   for (const lesson of lessons) {
     const courseName = String(lesson.courseName || '').trim();
-    const classNames = [...new Set([...(Array.isArray(lesson.classNames) ? lesson.classNames : []), lesson.className]
-      .map((item) => String(item || '').trim()).filter(Boolean))]
+    const classNames = uniqueCatalogNames([...(Array.isArray(lesson.classNames) ? lesson.classNames : []), lesson.className])
       .sort((left, right) => left.localeCompare(right, 'zh-CN-u-co-stroke', { numeric: true }));
-    const key = `${courseName}\u241f${classNames.join('\u241e')}`;
+    const key = `${catalogNameKey(courseName)}\u241f${classNames.map(catalogNameKey).join('\u241e')}`;
     if (!groups.has(key)) groups.set(key, { key, courseName, classNames, lessons: [] });
     groups.get(key).lessons.push(lesson);
   }

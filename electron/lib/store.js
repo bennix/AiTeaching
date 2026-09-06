@@ -2,6 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeUploadFilename, repairUtf8Mojibake } = require('./filenames');
+const { sameCatalogName } = require('./catalog-identity');
 
 const DEFAULT_STATE = {
   settings: {
@@ -403,24 +404,24 @@ class JsonStore {
     const normalizedClass = String(className || '').trim();
     if (!normalizedCourse || !normalizedClass) throw new Error('课程和班级不能为空');
     const studentIds = new Set(this.state.students
-      .filter((item) => item.courseName === normalizedCourse && item.className === normalizedClass)
+      .filter((item) => sameCatalogName(item.courseName, normalizedCourse) && sameCatalogName(item.className, normalizedClass))
       .map((item) => item.studentId));
     const relatedMaterials = this.state.classMaterials
-      .filter((item) => item.courseName === normalizedCourse && item.className === normalizedClass);
+      .filter((item) => sameCatalogName(item.courseName, normalizedCourse) && sameCatalogName(item.className, normalizedClass));
 
-    this.state.students = this.state.students.filter((item) => !(item.courseName === normalizedCourse && item.className === normalizedClass));
+    this.state.students = this.state.students.filter((item) => !(sameCatalogName(item.courseName, normalizedCourse) && sameCatalogName(item.className, normalizedClass)));
     this.state.submissions = this.state.submissions.filter((item) => !studentIds.has(item.studentId));
     this.state.attendance = this.state.attendance.filter((item) => !studentIds.has(item.studentId));
     this.state.exercises = this.state.exercises.filter((item) => !studentIds.has(item.targetStudentId));
     this.state.studentReports = this.state.studentReports.filter((item) => !studentIds.has(item.studentId));
-    this.state.classReports = this.state.classReports.filter((item) => !(item.courseName === normalizedCourse && item.className === normalizedClass));
-    this.state.classMaterials = this.state.classMaterials.filter((item) => !(item.courseName === normalizedCourse && item.className === normalizedClass));
+    this.state.classReports = this.state.classReports.filter((item) => !(sameCatalogName(item.courseName, normalizedCourse) && sameCatalogName(item.className, normalizedClass)));
+    this.state.classMaterials = this.state.classMaterials.filter((item) => !(sameCatalogName(item.courseName, normalizedCourse) && sameCatalogName(item.className, normalizedClass)));
     let unlinkedLessons = 0;
-    for (const lesson of this.state.lessons.filter((item) => item.courseName === normalizedCourse)) {
+    for (const lesson of this.state.lessons.filter((item) => sameCatalogName(item.courseName, normalizedCourse))) {
       const names = [...new Set([...(Array.isArray(lesson.classNames) ? lesson.classNames : []), lesson.className]
         .map((item) => String(item || '').trim()).filter(Boolean))];
-      if (!names.includes(normalizedClass)) continue;
-      const remaining = names.filter((item) => item !== normalizedClass);
+      if (!names.some((item) => sameCatalogName(item, normalizedClass))) continue;
+      const remaining = names.filter((item) => !sameCatalogName(item, normalizedClass));
       lesson.classNames = remaining;
       lesson.className = remaining[0] || '';
       lesson.updatedAt = new Date().toISOString();
@@ -436,18 +437,18 @@ class JsonStore {
   deleteCourse(courseName) {
     const normalizedCourse = String(courseName || '').trim();
     if (!normalizedCourse) throw new Error('课程不能为空');
-    const lessonIds = this.state.lessons.filter((item) => item.courseName === normalizedCourse).map((item) => item.id);
-    const studentIds = new Set(this.state.students.filter((item) => item.courseName === normalizedCourse).map((item) => item.studentId));
-    const relatedMaterials = this.state.classMaterials.filter((item) => item.courseName === normalizedCourse);
+    const lessonIds = this.state.lessons.filter((item) => sameCatalogName(item.courseName, normalizedCourse)).map((item) => item.id);
+    const studentIds = new Set(this.state.students.filter((item) => sameCatalogName(item.courseName, normalizedCourse)).map((item) => item.studentId));
+    const relatedMaterials = this.state.classMaterials.filter((item) => sameCatalogName(item.courseName, normalizedCourse));
     const deletedLessons = this.deleteLessons(lessonIds);
 
-    this.state.students = this.state.students.filter((item) => item.courseName !== normalizedCourse);
+    this.state.students = this.state.students.filter((item) => !sameCatalogName(item.courseName, normalizedCourse));
     this.state.submissions = this.state.submissions.filter((item) => !studentIds.has(item.studentId));
     this.state.attendance = this.state.attendance.filter((item) => !studentIds.has(item.studentId));
     this.state.exercises = this.state.exercises.filter((item) => !studentIds.has(item.targetStudentId));
     this.state.studentReports = this.state.studentReports.filter((item) => !studentIds.has(item.studentId));
-    this.state.classReports = this.state.classReports.filter((item) => item.courseName !== normalizedCourse);
-    this.state.classMaterials = this.state.classMaterials.filter((item) => item.courseName !== normalizedCourse);
+    this.state.classReports = this.state.classReports.filter((item) => !sameCatalogName(item.courseName, normalizedCourse));
+    this.state.classMaterials = this.state.classMaterials.filter((item) => !sameCatalogName(item.courseName, normalizedCourse));
     for (const material of relatedMaterials) {
       try { if (material.filePath && fs.existsSync(material.filePath)) fs.unlinkSync(material.filePath); } catch { /* Missing course files must not block deleting the course. */ }
     }

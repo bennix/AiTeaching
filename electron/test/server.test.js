@@ -133,6 +133,35 @@ test('学生可以选择已有课程并只读取所选课程的资料与已发�
   assert.equal(crossCourseSubmit.response.status, 400);
 });
 
+test('课程班级目录容忍空格、全半角括号及重复右括号差异', async (context) => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-catalog-identity-'));
+  const rendererDir = path.join(__dirname, '..', 'renderer');
+  const server = await createLanServer({ runtimeDir, rendererDir, preferredPort: 0 });
+  context.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  server.store.upsertStudent({ studentId: 'P001', name: '程序设计学生', courseName: 'Python程序设计', className: '教学班 AIB110002.02' });
+  server.store.upsertStudent({ studentId: 'M001', name: '数学学生', courseName: '高一数学', className: '高一（2）' });
+  server.store.addLessons([
+    { id: 'python', title: 'Python 程序设计 · 第 1 周', courseName: 'Python 程序设计', className: '教学班 AIB110002.02', classNames: ['教学班 AIB110002.02'], status: 'done', createdAt: '2026-09-01' },
+    { id: 'math', title: '高一数学 · 第 1 周', courseName: '高一数学', className: '高一（2）', classNames: ['高一（2）', '高一（2））'], status: 'done', createdAt: '2026-09-01' },
+  ]);
+
+  const catalog = await json(`${base}/api/public/courses`);
+  assert.deepEqual(catalog.body.courses.map((item) => item.label), [
+    '高一数学 · 高一（2）',
+    'Python 程序设计 · 教学班 AIB110002.02',
+  ]);
+  const python = catalog.body.courses.find((item) => item.courseName === 'Python 程序设计');
+  const login = await json(`${base}/api/auth/student`, {
+    method: 'POST', headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ studentId: 'P001', className: '教学班 AIB110002.02', courseId: python.id }),
+  });
+  assert.equal(login.response.status, 200);
+  const studentCookie = login.response.headers.get('set-cookie').split(';')[0];
+  const studentState = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
+  assert.deepEqual(studentState.body.lessons.map((item) => item.id), ['python']);
+});
+
 test('学生目录只显示仍存在的课程班级，教师可删除班级或整门课程', async (context) => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-delete-catalog-'));
   const rendererDir = path.join(__dirname, '..', 'renderer');

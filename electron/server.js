@@ -10,6 +10,7 @@ const { JsonStore } = require('./lib/store');
 const { buildLessonRecords, extractDocumentText } = require('./lib/documents');
 const { normalizeUploadFilename } = require('./lib/filenames');
 const { buildLearningAnalytics, reportScopeKey } = require('./lib/analytics');
+const { catalogPairKey, sameCatalogName } = require('./lib/catalog-identity');
 const {
   fetchModelCatalog,
   generateExercises,
@@ -51,14 +52,15 @@ function studentCourseCatalog(store) {
   const establishedClasses = new Set(store.state.students
     .map((item) => [String(item.courseName || '').trim(), String(item.className || '').trim()])
     .filter(([courseName, className]) => courseName && className)
-    .map(([courseName, className]) => `${courseName}\u0000${className}`));
+    .map(([courseName, className]) => catalogPairKey(courseName, className)));
   for (const lesson of store.state.lessons.filter((item) => item.status === 'done')) {
     const courseName = String(lesson.courseName || '').trim();
     if (!courseName) continue;
     for (const className of lessonClassNames(lesson)) {
-      if (!className || !establishedClasses.has(`${courseName}\u0000${className}`)) continue;
-      const id = Buffer.from(JSON.stringify([courseName, className]), 'utf8').toString('base64url');
-      if (!courses.has(id)) courses.set(id, { id, courseName, className, label: className ? `${courseName} · ${className}` : courseName });
+      const identity = catalogPairKey(courseName, className);
+      if (!className || !establishedClasses.has(identity) || courses.has(identity)) continue;
+      const id = Buffer.from(identity, 'utf8').toString('base64url');
+      courses.set(identity, { id, courseName, className, label: `${courseName} · ${className}` });
     }
   }
   return [...courses.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
@@ -83,9 +85,9 @@ function resolveStudentCourse(store, student, courseId = '') {
   const courses = studentCourseCatalog(store);
   const requested = courses.find((item) => item.id === courseId);
   if (requested) return requested;
-  return courses.find((item) => item.courseName === student.courseName && item.className === student.className)
-    || courses.find((item) => item.courseName === student.courseName)
-    || courses.find((item) => item.className === student.className)
+  return courses.find((item) => catalogPairKey(item.courseName, item.className) === catalogPairKey(student.courseName, student.className))
+    || courses.find((item) => sameCatalogName(item.courseName, student.courseName))
+    || courses.find((item) => sameCatalogName(item.className, student.className))
     || courses[0]
     || null;
 }
@@ -94,17 +96,17 @@ function visibleLessonsForStudent(store, student, course = null) {
   if (!student) return [];
   if (course) {
     return store.state.lessons.filter((lesson) => lesson.status === 'done'
-      && lesson.courseName === course.courseName
-      && lessonClassNames(lesson).includes(course.className));
+      && sameCatalogName(lesson.courseName, course.courseName)
+      && lessonClassNames(lesson).some((className) => sameCatalogName(className, course.className)));
   }
   return store.state.lessons.filter((lesson) => lesson.status === 'done'
-    && (!student.courseName || !lesson.courseName || lesson.courseName === student.courseName)
-    && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).includes(student.className)));
+    && (!student.courseName || !lesson.courseName || sameCatalogName(lesson.courseName, student.courseName))
+    && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).some((className) => sameCatalogName(className, student.className))));
 }
 
 function studentsForLesson(store, lesson) {
-  return store.state.students.filter((student) => (!student.courseName || !lesson.courseName || student.courseName === lesson.courseName)
-    && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).includes(student.className)));
+  return store.state.students.filter((student) => (!student.courseName || !lesson.courseName || sameCatalogName(student.courseName, lesson.courseName))
+    && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).some((className) => sameCatalogName(className, student.className))));
 }
 
 function htmlEscape(value) {
@@ -556,7 +558,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
       if (request.method === 'POST' && pathname === '/api/auth/student') {
         const body = await readJson(request);
         const student = store.state.students.find((item) => item.studentId === String(body.studentId || '').trim()
-          && (!body.className || item.className === body.className));
+          && (!body.className || sameCatalogName(item.className, body.className)));
         if (!student) return sendJson(response, 401, { error: '学号或班级不匹配' });
         const course = resolveStudentCourse(store, student, String(body.courseId || ''));
         if (body.courseId && course?.id !== body.courseId) return sendJson(response, 400, { error: '所选课程不存在或尚未完成发布' });
@@ -980,7 +982,9 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const lessons = visibleLessonsForStudent(store, student, course);
         const lessonIds = new Set(lessons.map((item) => item.id));
         const material = store.state.materials.find((item) => item.id === studentMaterialDownloadMatch[1] && lessonIds.has(item.lessonId))
-          || store.state.classMaterials.find((item) => item.id === studentMaterialDownloadMatch[1] && (!item.className || item.className === course?.className) && (!item.courseName || item.courseName === course?.courseName));
+          || store.state.classMaterials.find((item) => item.id === studentMaterialDownloadMatch[1]
+            && (!item.className || sameCatalogName(item.className, course?.className))
+            && (!item.courseName || sameCatalogName(item.courseName, course?.courseName)));
         if (!material || !fs.existsSync(material.filePath)) return sendJson(response, 404, { error: '资料不存在' });
         response.writeHead(200, {
           'Content-Type': 'application/octet-stream',
@@ -1001,7 +1005,8 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const exerciseIds = new Set(exercises.map((item) => item.id));
         const submissions = store.state.submissions.filter((item) => item.studentId === student.studentId && exerciseIds.has(item.exerciseId));
         const materials = store.state.materials.filter((item) => lessonIds.has(item.lessonId)).map(({ filePath, ...item }) => item);
-        const classMaterials = store.state.classMaterials.filter((item) => (!item.className || item.className === course?.className) && (!item.courseName || item.courseName === course?.courseName)).map(({ filePath, ...item }) => item);
+        const classMaterials = store.state.classMaterials.filter((item) => (!item.className || sameCatalogName(item.className, course?.className))
+          && (!item.courseName || sameCatalogName(item.courseName, course?.courseName))).map(({ filePath, ...item }) => item);
         return sendJson(response, 200, {
           student, availableCourses, selectedCourseId: course?.id || '', lessons, exercises, submissions,
           attendance: store.state.attendance.filter((item) => item.studentId === student.studentId && lessonIds.has(item.lessonId)),
