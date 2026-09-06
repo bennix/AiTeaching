@@ -819,6 +819,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         broadcastLesson(store.getLessonDetail(lesson.id));
         try {
           await generateExercisesForBlueprint(store.getSettings({ includeKey: true }), lesson, blueprint, {
+            excludeQuestions: store.state.exercises.filter((item) => item.lessonId === lesson.id).map((item) => item.question),
             onProgress: (fresh, progress) => {
               const batch = exerciseRecords(fresh, lesson.id);
               if (batch.length) { store.addExercises(batch); records.push(...batch); }
@@ -869,7 +870,11 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (!lesson) throw new Error('该学生没有可用的已完成课次');
         const wrongExerciseIds = store.state.submissions.filter((item) => item.studentId === studentId && !item.correct).map((item) => item.exerciseId);
         const weakPoints = [...new Set(store.state.exercises.filter((item) => wrongExerciseIds.includes(item.id)).map((item) => item.knowledgePoint).filter(Boolean))].join('、');
-        const generated = await generateExercises(store.getSettings({ includeKey: true }), lesson, { targetStudentId: studentId, weakPoints });
+        const generated = await generateExercises(store.getSettings({ includeKey: true }), lesson, {
+          targetStudentId: studentId,
+          weakPoints,
+          excludeQuestions: store.state.exercises.filter((item) => item.lessonId === lesson.id).map((item) => item.question),
+        });
         const records = exerciseRecords(generated, lesson.id, { targetStudentId: studentId, published: true });
         store.addExercises(records);
         return sendJson(response, 201, { ok: true, count: records.length });

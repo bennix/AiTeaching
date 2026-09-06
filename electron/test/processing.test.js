@@ -28,7 +28,9 @@ test('semester import persists a sequential queue and passes completed weeks int
     const exerciseType = /允许的题型仅限：([^（]+)/.exec(prompt)?.[1] || 'choice';
     const exerciseCount = Number(/恰好 (\d+) 道/.exec(prompt)?.[1] || 0);
     const content = weekly ? `# 第 ${week} 周已整理方案` : JSON.stringify(Array.from({ length: exerciseCount }, (_, index) => ({
-      type: exerciseType, question: `题目 ${index + 1}`, answer: '答案', difficulty: 'medium', knowledgePoint: '知识点',
+      type: exerciseType,
+      question: exerciseType === 'choice' ? `${exerciseType} 题目 ${index + 1}\nA. 选项甲${index}\nB. 选项乙${index}\nC. 选项丙${index}\nD. 选项丁${index}` : `${exerciseType} 题目 ${index + 1}`,
+      answer: exerciseType === 'choice' ? 'A' : '答案', difficulty: 'medium', knowledgePoint: '知识点',
     })));
     response.writeHead(200, { 'Content-Type': 'application/json' });
     response.end(JSON.stringify({ choices: [{ message: { content } }] }));

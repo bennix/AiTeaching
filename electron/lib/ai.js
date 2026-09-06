@@ -1,3 +1,5 @@
+const { exerciseQuestionKey, isGeneratedExerciseValid } = require('./exercise-quality');
+
 function endpoint(baseUrl, suffix) {
   const clean = String(baseUrl || '').trim().replace(/\/+$/, '');
   if (suffix === '/chat/completions' && /\/chat\/completions$/i.test(clean)) return clean;
@@ -386,7 +388,7 @@ function parseGeneratedExercises(content, options) {
       solutionOne: String(item.solutionOne || ''),
       solutionTwo: String(item.solutionTwo || ''),
       knowledgePoint: String(item.knowledgePoint || ''),
-    })).slice(0, options.count);
+    })).filter(isGeneratedExerciseValid).slice(0, options.count);
 }
 
 async function reviewGeneratedExercises(settings, lesson, exercises) {
@@ -411,7 +413,7 @@ async function reviewGeneratedExercises(settings, lesson, exercises) {
     solutionTwo: exercise.solutionTwo,
     knowledgePoint: exercise.knowledgePoint,
   }));
-  const prompt = `你是独立于出题模型的数理化题目复核专家。请逐题重新验算，检查题干条件是否充分、答案是否唯一或表述严谨、两种解法是否真正独立且都能推出同一结论，并检查选择题选项与答案是否一致。
+  const prompt = `你是独立于出题模型的数理化题目复核专家。请逐题重新验算，检查题干条件是否充分、答案是否唯一或表述严谨、两种解法是否真正独立且都能推出同一结论，并检查选择题是否恰好包含 A-D 四个互不重复的选项、选项是否互斥且答案是否一致。
 
 只有完全正确、无歧义且两种解法互相印证的题目才能 approved=true。不要替不合格题目补条件或静默修正；不合格必须拒绝。只返回严格 JSON：
 {"reviews":[{"index":0,"approved":true,"verifiedAnswer":"独立验算确认的最终答案","reason":"复核依据；说明两种解法为何一致"}]}
@@ -459,7 +461,8 @@ async function generateExercises(settings, lesson, { targetStudentId = null, wea
 题目必须忠实适配课程学科。除非课程名称或教学内容明确属于编程、软件开发或计算机调试，否则禁止出现代码、Debug、调试程序等编程场景；application 表示适合当前学科的实践题、计算题、案例题、实验题或综合应用题。
 exercises 数组中的每一项格式：{
   "type":"choice|short_answer|application",
-  "question":"题目；选择题须包含 A-D 四个选项",
+  "question":"题干；选择题的此字段只写题干，不要在此重复选项",
+  "options":{"A":"选择题选项A","B":"选择题选项B","C":"选择题选项C","D":"选择题选项D"},
   "answer":"参考答案；选择题以正确选项字母开头",
   "explanation":"说明为什么答案正确，并给出关键解题思路",
   "solutionOne":"第一种完整解法",
@@ -467,6 +470,7 @@ exercises 数组中的每一项格式：{
   "difficulty":"easy|medium|hard",
   "knowledgePoint":"知识点"
 }
+选择题必须在 options 中恰好提供 A、B、C、D 四项，每个标签只能出现一次，四项内容必须互不相同且彼此可区分，只能有一个最佳答案。不得把整组 A-D 选项重复输出，也不得在 question 和 options 中各写一遍选项。非选择题省略 options。
 ${needsReview ? '本课程属于数学、物理或化学。每道题必须提供两种真正独立的完整解法，并分别推导到同一最终答案；禁止把同一解法换句话重复。题目稍后还会交给另一个模型独立验算，未通过的题目不会入库。' : 'solutionOne 与 solutionTwo 可按学科需要提供；不强制要求非数理化题目使用双解。'}
 ${excludeQuestions.length ? `不得重复以下已生成题目：\n${excludeQuestions.map((item) => `- ${item}`).join('\n').slice(0, 6000)}` : ''}
 ${targetStudentId ? `这是给学生 ${targetStudentId} 的个性化练习，重点补强：${weakPoints || '近期薄弱知识点'}。` : ''}
@@ -483,12 +487,12 @@ ${String(lesson.aiResult || lesson.rawText || '').slice(0, 12000)}`;
   return reviewGeneratedExercises(settings, lesson, generated);
 }
 
-async function generateExercisesForBlueprint(settings, lesson, blueprint, { onProgress } = {}) {
+async function generateExercisesForBlueprint(settings, lesson, blueprint, { onProgress, excludeQuestions = [] } = {}) {
   const configs = normalizeExerciseBlueprint(blueprint);
   const batches = [];
+  const seenQuestions = new Set(excludeQuestions.map(exerciseQuestionKey).filter(Boolean));
   for (const item of configs) {
     const collected = [];
-    const seen = new Set();
     const maxAttempts = requiresIndependentExerciseReview(lesson) ? Math.ceil(item.count / 4) + 3 : 3;
     onProgress?.([], { type: item.type, expected: item.count, actual: 0, phase: 'generating' });
     for (let attempt = 0; attempt < maxAttempts && collected.length < item.count; attempt += 1) {
@@ -498,7 +502,7 @@ async function generateExercisesForBlueprint(settings, lesson, blueprint, { onPr
         const requestCount = requiresIndependentExerciseReview(lesson) ? Math.min(4, remaining) : remaining;
         generated = await generateExercises(settings, lesson, {
           types: [item.type], count: requestCount, difficulty: item.difficulty,
-          excludeQuestions: collected.map((exercise) => exercise.question),
+          excludeQuestions: [...excludeQuestions, ...batches.flat(), ...collected].map((exercise) => typeof exercise === 'string' ? exercise : exercise.question),
           onReview: (candidateCount) => onProgress?.([], {
             type: item.type, expected: item.count, actual: collected.length, candidateCount, phase: 'reviewing',
           }),
@@ -509,8 +513,8 @@ async function generateExercisesForBlueprint(settings, lesson, blueprint, { onPr
       }
       const fresh = [];
       for (const exercise of generated) {
-        const key = exercise.question.trim();
-        if (key && !seen.has(key)) { seen.add(key); collected.push(exercise); fresh.push(exercise); }
+        const key = exerciseQuestionKey(exercise.question);
+        if (key && !seenQuestions.has(key)) { seenQuestions.add(key); collected.push(exercise); fresh.push(exercise); }
       }
       onProgress?.(fresh, { type: item.type, expected: item.count, actual: collected.length, phase: 'generating' });
     }
