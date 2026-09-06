@@ -11,6 +11,7 @@ const { buildLessonRecords, extractDocumentText } = require('./lib/documents');
 const { normalizeUploadFilename } = require('./lib/filenames');
 const { buildLearningAnalytics, reportScopeKey } = require('./lib/analytics');
 const { catalogPairKey, sameCatalogName } = require('./lib/catalog-identity');
+const { establishedCourseClasses, lessonClassNames } = require('./lib/teaching-catalog');
 const {
   fetchModelCatalog,
   generateExercises,
@@ -48,28 +49,11 @@ function cookies(request) {
 }
 
 function studentCourseCatalog(store) {
-  const courses = new Map();
-  const establishedClasses = new Set(store.state.students
-    .map((item) => [String(item.courseName || '').trim(), String(item.className || '').trim()])
-    .filter(([courseName, className]) => courseName && className)
-    .map(([courseName, className]) => catalogPairKey(courseName, className)));
-  for (const lesson of store.state.lessons.filter((item) => item.status === 'done')) {
-    const courseName = String(lesson.courseName || '').trim();
-    if (!courseName) continue;
-    for (const className of lessonClassNames(lesson)) {
-      const identity = catalogPairKey(courseName, className);
-      if (!className || !establishedClasses.has(identity) || courses.has(identity)) continue;
-      const id = Buffer.from(identity, 'utf8').toString('base64url');
-      courses.set(identity, { id, courseName, className, label: `${courseName} · ${className}` });
-    }
-  }
-  return [...courses.values()].sort((left, right) => left.label.localeCompare(right.label, 'zh-CN'));
+  return establishedCourseClasses(store.state);
 }
 
-function lessonClassNames(lesson = {}) {
-  const names = Array.isArray(lesson.classNames) ? lesson.classNames : [lesson.className];
-  const unique = [...new Set(names.map((item) => String(item || '').trim()).filter(Boolean))];
-  return unique.length ? unique : [''];
+function lessonHasTeachingContent(lesson) {
+  return lesson.status === 'done' || Boolean(String(lesson.aiResult || lesson.structuredNotes || '').trim());
 }
 
 function parseClassNames(value, fallback = '') {
@@ -95,11 +79,11 @@ function resolveStudentCourse(store, student, courseId = '') {
 function visibleLessonsForStudent(store, student, course = null) {
   if (!student) return [];
   if (course) {
-    return store.state.lessons.filter((lesson) => lesson.status === 'done'
+    return store.state.lessons.filter((lesson) => lessonHasTeachingContent(lesson)
       && sameCatalogName(lesson.courseName, course.courseName)
       && lessonClassNames(lesson).some((className) => sameCatalogName(className, course.className)));
   }
-  return store.state.lessons.filter((lesson) => lesson.status === 'done'
+  return store.state.lessons.filter((lesson) => lessonHasTeachingContent(lesson)
     && (!student.courseName || !lesson.courseName || sameCatalogName(lesson.courseName, student.courseName))
     && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).some((className) => sameCatalogName(className, student.className))));
 }
@@ -709,7 +693,10 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (!file) throw new Error('请选择教案文件');
         const text = await extractDocumentText(file.filename, file.buffer);
         const storedName = `${Date.now()}-${file.filename.replace(/[^\p{L}\p{N}._-]+/gu, '_')}`;
-        const classNames = parseClassNames(fields.classNames, fields.className);
+        let classNames = parseClassNames(fields.classNames, fields.className);
+        const availableClasses = studentCourseCatalog(store).filter((item) => sameCatalogName(item.courseName, fields.courseName));
+        if (!classNames.length && availableClasses.length === 1) classNames = [availableClasses[0].className];
+        if (!classNames.length && availableClasses.length > 1) throw new Error('该课程有多个班级，请先选择教案适用班级');
         const lessons = buildLessonRecords({ ...fields, className: classNames[0] || fields.className, filename: file.filename, text });
         for (const lesson of lessons) {
           lesson.classNames = classNames;
@@ -775,7 +762,10 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (!lesson) return sendJson(response, 404, { error: '未找到课次' });
         const body = await readJson(request);
         const classNames = parseClassNames(body.classNames);
-        const updated = store.updateLesson(lesson.id, { classNames, className: classNames[0] || '' });
+        if (!classNames.length) throw new Error('请至少选择一个班级；生成课件不会清空现有班级关联');
+        const availableClasses = studentCourseCatalog(store).filter((item) => sameCatalogName(item.courseName, lesson.courseName));
+        if (classNames.some((name) => !availableClasses.some((item) => sameCatalogName(item.className, name)))) throw new Error('所选班级不属于该课程或已被删除，请刷新后重新选择');
+        const updated = store.updateLesson(lesson.id, { classNames, className: classNames[0] || '', classAssociation: 'linked' });
         return sendJson(response, 200, { ok: true, lesson: updated });
       }
       const notesMatch = pathname.match(/^\/api\/lessons\/([^/]+)\/notes$/);

@@ -220,7 +220,7 @@
   <dialog id="lesson-dialog">
     <div class="dialog-heading"><div><span id="dialog-week" class="badge"></span><h2 id="dialog-title"></h2><p id="dialog-meta"></p></div><button id="dialog-close" class="icon-button">×</button></div>
     <div id="dialog-error" class="error-box" hidden></div>
-    <div class="dialog-actions"><button id="process-button" class="button primary">AI 重新整理</button><button id="courseware-button" class="button secondary">生成 AI 课件</button><button id="test-package-button" class="button secondary">测试邮件</button><button id="send-package-button" class="button secondary">发送全班</button><button id="delete-button" class="button danger">删除</button></div>
+    <div class="dialog-actions"><button id="process-button" class="button primary">AI 重新整理</button><button id="lesson-classes-button" class="button secondary">关联班级</button><button id="courseware-button" class="button secondary">生成 AI 课件</button><button id="test-package-button" class="button secondary">测试邮件</button><button id="send-package-button" class="button secondary">发送全班</button><button id="delete-button" class="button danger">删除</button></div>
     <div class="tabs"><button class="tab active" data-tab="ai">AI 教学周方案</button><button class="tab" data-tab="exercises">题库</button><button class="tab" data-tab="materials">课件资料</button><button class="tab" data-tab="attendance">签到</button><button class="tab" data-tab="source">导入原文</button></div>
     <div id="dialog-content" class="document-content markdown-body"></div>
   </dialog>
@@ -239,7 +239,7 @@
     <div class="dialog-heading"><div><span class="badge">班级关联</span><h2>选择课件适用班级</h2><p>可以同时关联多个已通过选课单建立的班级。</p></div><button id="courseware-class-close" class="icon-button" type="button">×</button></div>
     <form id="courseware-class-form" class="stack courseware-class-form">
       <div id="courseware-class-picker" class="class-picker"></div>
-      <div class="notice">保存后，本周教学方案、题库和课件会同时对所选班级可见。</div>
+      <div class="notice">保存后，已完成的教学方案与课件对所选班级可见；习题需要在题库中点击“发放”后才对学生可见。</div>
       <button id="courseware-generate-button" class="button primary wide" type="submit">保存班级并生成 AI 课件</button>
     </form>
   </dialog>

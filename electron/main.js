@@ -4,14 +4,29 @@ const { createLanServer } = require('./server');
 
 let mainWindow = null;
 let lanServer = null;
+let serverPromise = null;
+let openingWindow = null;
 
 async function createWindow() {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    if (mainWindow.isMinimized()) mainWindow.restore();
+    mainWindow.show();
+    mainWindow.focus();
+    return;
+  }
+  if (openingWindow) return openingWindow;
+  openingWindow = openWindow();
+  try { await openingWindow; } finally { openingWindow = null; }
+}
+
+async function openWindow() {
   const runtimeDir = process.env.AIAID_DATA_DIR || app.getPath('userData');
-  lanServer = await createLanServer({
+  serverPromise ||= createLanServer({
     runtimeDir,
     rendererDir: path.join(__dirname, 'renderer'),
     preferredPort: Number(process.env.AIAID_PORT || 5000),
   });
+  lanServer = await serverPromise;
 
   mainWindow = new BrowserWindow({
     width: 1320,
@@ -27,6 +42,7 @@ async function createWindow() {
       sandbox: true,
     },
   });
+  mainWindow.on('closed', () => { mainWindow = null; });
 
   mainWindow.webContents.setWindowOpenHandler(({ url }) => {
     if (/^https?:/i.test(url)) shell.openExternal(url);
@@ -35,12 +51,17 @@ async function createWindow() {
   await mainWindow.loadURL(`http://127.0.0.1:${lanServer.port}`);
 }
 
+if (!app.requestSingleInstanceLock()) {
+  app.quit();
+} else {
+app.on('second-instance', () => { app.whenReady().then(createWindow); });
 app.whenReady().then(async () => {
   await createWindow();
   app.on('activate', async () => {
     if (BrowserWindow.getAllWindows().length === 0) await createWindow();
   });
 });
+}
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();

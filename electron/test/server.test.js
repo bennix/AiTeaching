@@ -112,7 +112,7 @@ test('学生可以选择已有课程并只读取所选课程的资料与已发�
   server.store.save();
 
   const catalog = await json(`${base}/api/public/courses`);
-  assert.deepEqual(catalog.body.courses.map((item) => item.label), ['高一数学 · 数学测试班', '高一英语 · 英语测试班']);
+  assert.deepEqual(catalog.body.courses.map((item) => item.label), ['高一数学 · 数学测试班', '高一英语 · 英语测试班', '旧课程 · 学生行政班']);
   const math = catalog.body.courses.find((item) => item.courseName === '高一数学');
   const english = catalog.body.courses.find((item) => item.courseName === '高一英语');
   const login = await json(`${base}/api/auth/student`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: 'S002', className: '学生行政班', courseId: math.id }) });

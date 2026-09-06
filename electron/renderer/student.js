@@ -14,7 +14,7 @@ function renderLoginClasses(courseName) {
   const classes = classesForCourse(studentState.loginCatalog, courseName);
   const select = $('#student-class-select');
   select.innerHTML = classes.length
-    ? `<option value="">请选择班级</option>${classes.map((item) => `<option value="${esc(item.id)}" data-class-name="${esc(item.className)}">${esc(item.className)}</option>`).join('')}`
+    ? `<option value="">请选择班级</option>${classes.map((item) => `<option value="${esc(item.id)}" ${classes.length === 1 ? 'selected' : ''} data-class-name="${esc(item.className)}">${esc(item.className)}</option>`).join('')}`
     : '<option value="">该课程暂无可用班级</option>';
   select.disabled = !classes.length;
   $('#student-login-form button').disabled = !classes.length;
@@ -33,7 +33,7 @@ function render() {
   const courseSelect = $('#student-course-select');
   courseSelect.innerHTML = names.length
     ? names.map((courseName) => `<option value="${esc(courseName)}" ${courseName === studentState.courseName ? 'selected' : ''}>${esc(courseName)}</option>`).join('')
-    : '<option value="">暂无已发布课程</option>';
+    : '<option value="">暂无已建立课程，请联系教师导入选课单</option>';
   courseSelect.disabled = !names.length;
   const classSelect = $('#student-course-class-select');
   const availableClasses = classesForCourse(data.availableCourses, studentState.courseName);
@@ -87,4 +87,25 @@ $('#student-logout').addEventListener('click', async () => { await api('/api/aut
 $('#student-courseware-close').addEventListener('click', () => $('#student-courseware-preview').close());
 $('#student-login-form').addEventListener('submit', async (event) => { event.preventDefault(); const selected = studentState.loginCatalog.find((item) => item.id === $('#student-class-select').value); try { await api('/api/auth/student', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: new FormData(event.currentTarget).get('studentId'), courseId: selected?.id || '', className: selected?.className || '' }) }); studentState.courseName = selected?.courseName || ''; $('#student-login').close(); await load(); } catch (error) { toast(error.message, true); } });
 $('#student-login-course-select').addEventListener('change', (event) => renderLoginClasses(event.target.value));
-(async function boot() { const auth = await api('/api/auth/status'); if (auth.role === 'student') return load(); const catalog = await api('/api/public/courses'); studentState.loginCatalog = catalog.courses; const names = courseNames(catalog.courses); $('#student-login-course-select').innerHTML = names.length ? `<option value="">请选择课程</option>${names.map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join('')}` : '<option value="">暂无已发布课程</option>'; $('#student-login-course-select').disabled = !names.length; $('#student-login-form button').disabled = true; $('#student-login').showModal(); })().catch((error) => toast(error.message, true));
+async function refreshLoginCatalog() {
+  const catalog = await api('/api/public/courses');
+  const select = $('#student-login-course-select');
+  const previousCourse = select.value;
+  const previousClass = $('#student-class-select').value;
+  studentState.loginCatalog = catalog.courses;
+  const names = courseNames(catalog.courses);
+  select.innerHTML = names.length ? `<option value="">请选择课程</option>${names.map((item) => `<option value="${esc(item)}">${esc(item)}</option>`).join('')}` : '<option value="">暂无已建立课程，请联系教师导入选课单</option>';
+  select.disabled = !names.length;
+  select.value = names.includes(previousCourse) ? previousCourse : names.length === 1 ? names[0] : '';
+  renderLoginClasses(select.value);
+  if (classesForCourse(catalog.courses, select.value).some((item) => item.id === previousClass)) $('#student-class-select').value = previousClass;
+}
+(async function boot() {
+  const auth = await api('/api/auth/status');
+  if (auth.role === 'student') return load();
+  await refreshLoginCatalog();
+  $('#student-login').showModal();
+  setInterval(() => {
+    if ($('#student-login').open && !document.hidden) refreshLoginCatalog().catch((error) => toast(error.message, true));
+  }, 15000);
+})().catch((error) => toast(error.message, true));

@@ -91,7 +91,7 @@ function studentClassGroups(students = []) {
   for (const student of students) {
     const className = String(student.className || '').trim();
     const courseName = String(student.courseName || '').trim();
-    const key = `${courseName}\u241f${className}`;
+    const key = `${catalogNameKey(courseName)}\u241f${catalogNameKey(className)}`;
     if (!groups.has(key)) groups.set(key, {
       key,
       className,
@@ -117,9 +117,10 @@ function establishedClasses(students = []) {
 function renderImportClassPicker(students) {
   const picker = $('#import-class-picker');
   const selected = new Set($$('[name="linkedClass"]:checked').map((input) => input.value));
-  const classes = establishedClasses(students);
+  const courseName = document.querySelector('#import-form [name="courseName"]').value.trim();
+  const classes = establishedClasses(students).filter((item) => !courseName || catalogNameKey(item.courseName) === catalogNameKey(courseName));
   picker.innerHTML = classes.length ? classes.map((item) => `<label class="class-choice">
-    <input type="checkbox" name="linkedClass" value="${escapeHtml(item.className)}" ${selected.has(item.className) ? 'checked' : ''}>
+    <input type="checkbox" name="linkedClass" value="${escapeHtml(item.className)}" ${selected.has(item.className) || (courseName && classes.length === 1) ? 'checked' : ''}>
     <span><strong>${escapeHtml(item.className)}</strong><small>${escapeHtml(item.courseName || '未指定课程')} · ${item.count} 名学生${item.term ? ` · ${escapeHtml(item.term)}` : ''}</small></span>
   </label>`).join('') : '<span class="muted">请先在“学生与班级”中导入选课单建立班级。</span>';
   $$('[name="linkedClass"]').forEach((input) => input.addEventListener('change', () => {
@@ -431,7 +432,7 @@ async function openLesson(id, activeTab = 'ai') {
   $('#dialog-title').textContent = state.activeLesson.title;
   $('#dialog-meta').textContent = `${state.activeLesson.courseName || '未填写课程'}${lessonClassLabel(state.activeLesson) ? ` · ${lessonClassLabel(state.activeLesson)}` : ''} · ${state.activeLesson.date || '未填写日期'} · ${state.activeLesson.sourceFilename}`;
   const effectiveWarning = state.activeLesson.exerciseCoverage?.complete ? '' : state.activeLesson.warning;
-  const notice = state.activeLesson.error || effectiveWarning || '';
+  const notice = state.activeLesson.error || effectiveWarning || (!lessonClassLabel(state.activeLesson) ? '此教案尚未关联班级，学生暂时看不到内容。请点击“关联班级”。' : '');
   $('#dialog-error').hidden = !notice;
   $('#dialog-error').textContent = notice;
   $('#dialog-error').classList.toggle('warning', Boolean(effectiveWarning && !state.activeLesson.error));
@@ -882,18 +883,22 @@ async function previewCourseware(materialId) {
   } catch (error) { toast(error.message, true); }
 }
 
-function openCoursewareClassDialog() {
+function openCoursewareClassDialog(generateCourseware = true) {
   if (!state.activeLesson) return;
-  const selected = new Set((Array.isArray(state.activeLesson.classNames) ? state.activeLesson.classNames : [state.activeLesson.className]).filter(Boolean));
-  const classes = establishedClasses(state.data?.students || []);
+  state.generateCoursewareAfterLink = generateCourseware;
+  $('#courseware-generate-button').textContent = generateCourseware ? '保存班级并生成 AI 课件' : '保存班级关联';
+  const selected = new Set(uniqueCatalogNames([...(state.activeLesson.classNames || []), state.activeLesson.className]).map(catalogNameKey));
+  const classes = establishedClasses(state.data?.students || []).filter((item) => catalogNameKey(item.courseName) === catalogNameKey(state.activeLesson.courseName));
   $('#courseware-class-picker').innerHTML = classes.length ? classes.map((item) => `<label class="class-choice">
-    <input type="checkbox" name="coursewareClass" value="${escapeHtml(item.className)}" ${selected.has(item.className) ? 'checked' : ''}>
+    <input type="checkbox" name="coursewareClass" value="${escapeHtml(item.className)}" ${selected.has(catalogNameKey(item.className)) || (!selected.size && classes.length === 1) ? 'checked' : ''}>
     <span><strong>${escapeHtml(item.className)}</strong><small>${escapeHtml(item.courseName || '未指定课程')} · ${item.count} 名学生</small></span>
   </label>`).join('') : '<div class="empty">还没有已建立班级。请先从“学生与班级”导入选课单。</div>';
   if (!$('#courseware-class-dialog').open) $('#courseware-class-dialog').showModal();
 }
 
-$('#courseware-button').addEventListener('click', openCoursewareClassDialog);
+$('#courseware-button').addEventListener('click', () => openCoursewareClassDialog(true));
+$('#lesson-classes-button').addEventListener('click', () => openCoursewareClassDialog(false));
+document.querySelector('#import-form [name="courseName"]').addEventListener('input', () => renderImportClassPicker(state.data?.students || []));
 $('#courseware-class-close').addEventListener('click', () => $('#courseware-class-dialog').close());
 $('#courseware-class-form').addEventListener('submit', async (event) => {
   event.preventDefault();
@@ -904,9 +909,17 @@ $('#courseware-class-form').addEventListener('submit', async (event) => {
   button.textContent = '正在保存并生成课件…';
   try {
     const classNames = $$('[name="coursewareClass"]:checked').map((input) => input.value);
+    if (!classNames.length) throw new Error('请至少选择一个适用班级');
     await api(`/api/lessons/${encodeURIComponent(lessonId)}/classes`, {
       method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ classNames }),
     });
+    if (!state.generateCoursewareAfterLink) {
+      $('#courseware-class-dialog').close();
+      await refresh();
+      await openLesson(lessonId);
+      toast('班级关联已保存；学生可查看教学方案、课件和已发放习题');
+      return;
+    }
     const result = await api(`/api/lessons/${encodeURIComponent(lessonId)}/courseware`, { method: 'POST' });
     state.activeLesson = await api(`/api/lessons/${encodeURIComponent(lessonId)}`);
     const listItem = state.data?.lessons?.find((item) => item.id === lessonId);

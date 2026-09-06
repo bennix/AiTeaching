@@ -4,6 +4,7 @@ const path = require('node:path');
 const { normalizeUploadFilename, repairUtf8Mojibake } = require('./filenames');
 const { sameCatalogName } = require('./catalog-identity');
 const { repairRepeatedChoiceOptions } = require('./exercise-quality');
+const { lessonClassNames, linkPendingLessons } = require('./teaching-catalog');
 
 const DEFAULT_STATE = {
   settings: {
@@ -337,6 +338,7 @@ class JsonStore {
   }
 
   addLessons(lessons) {
+    for (const lesson of lessons) lesson.classAssociation ||= lessonClassNames(lesson).some(Boolean) ? 'linked' : 'pending';
     this.state.lessons.push(...lessons);
     this.save();
   }
@@ -385,6 +387,7 @@ class JsonStore {
     const existing = this.state.students.find((item) => item.studentId === studentId);
     const record = { id: existing?.id || crypto.randomUUID(), ...existing, ...student, studentId, name: String(student.name).trim(), updatedAt: new Date().toISOString() };
     if (existing) Object.assign(existing, record); else this.state.students.push(record);
+    linkPendingLessons(this.state);
     this.save();
     return record;
   }
@@ -401,6 +404,7 @@ class JsonStore {
       if (existing) { Object.assign(existing, record); updated += 1; }
       else { this.state.students.push(record); added += 1; }
     }
+    linkPendingLessons(this.state);
     this.save();
     return { added, updated };
   }
@@ -438,6 +442,7 @@ class JsonStore {
       const remaining = names.filter((item) => !sameCatalogName(item, normalizedClass));
       lesson.classNames = remaining;
       lesson.className = remaining[0] || '';
+      lesson.classAssociation = remaining.length ? 'linked' : 'detached';
       lesson.updatedAt = new Date().toISOString();
       unlinkedLessons += 1;
     }
