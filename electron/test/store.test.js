@@ -58,6 +58,21 @@ test('loading existing data repairs previously stored Chinese filename mojibake'
   assert.match(fs.readFileSync(reloaded.dataPath, 'utf8'), new RegExp(expected));
 });
 
+test('loading existing data removes only an exactly repeated A-D choice block', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-choice-repair-'));
+  const block = 'A. 甲\nB. 乙\nC. 丙\nD. 丁';
+  fs.writeFileSync(path.join(runtimeDir, 'teaching-data.json'), JSON.stringify({
+    exercises: [
+      { id: 'duplicate', type: 'choice', question: `重复题\n${block}\n${block}`, answer: 'A' },
+      { id: 'math', type: 'choice', question: '区间题\nA. (0,1)\nB. [0,1)\nC. (0,1]\nD. [0,1]', answer: 'A' },
+    ],
+  }));
+  const store = new JsonStore(runtimeDir);
+  assert.equal(store.state.exercises[0].question, `重复题\n${block}`);
+  assert.ok(store.state.exercises[0].optionQualityRepairedAt);
+  assert.match(store.state.exercises[1].question, /B\. \[0,1\)/);
+});
+
 test('batch deletion removes only selected lessons and their dependent records', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-delete-'));
   const store = new JsonStore(runtimeDir);

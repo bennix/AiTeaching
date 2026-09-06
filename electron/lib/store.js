@@ -3,6 +3,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeUploadFilename, repairUtf8Mojibake } = require('./filenames');
 const { sameCatalogName } = require('./catalog-identity');
+const { repairRepeatedChoiceOptions } = require('./exercise-quality');
 
 const DEFAULT_STATE = {
   settings: {
@@ -75,7 +76,8 @@ class JsonStore {
     const filenamesRepaired = this.#repairStoredFilenames();
     const coursewareDeduplicated = this.#deduplicateGeneratedCourseware();
     const lessonStatesRepaired = this.#repairCompletedLessonStates();
-    if (filenamesRepaired || coursewareDeduplicated || lessonStatesRepaired) this.save();
+    const exerciseOptionsRepaired = this.#repairRepeatedChoiceOptions();
+    if (filenamesRepaired || coursewareDeduplicated || lessonStatesRepaired || exerciseOptionsRepaired) this.save();
   }
 
   #loadOrCreateKey() {
@@ -170,6 +172,18 @@ class JsonStore {
         lesson.error = '';
         changed = true;
       }
+    }
+    return changed;
+  }
+
+  #repairRepeatedChoiceOptions() {
+    let changed = false;
+    for (const exercise of this.state.exercises.filter((item) => item.type === 'choice')) {
+      const repaired = repairRepeatedChoiceOptions(exercise.question);
+      if (repaired === exercise.question) continue;
+      exercise.question = repaired;
+      exercise.optionQualityRepairedAt = new Date().toISOString();
+      changed = true;
     }
     return changed;
   }

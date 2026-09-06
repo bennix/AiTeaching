@@ -16,6 +16,24 @@ function parseChoiceOptions(question) {
   }).filter(Boolean);
 }
 
+function repairRepeatedChoiceOptions(question) {
+  const source = String(question || '');
+  const lines = source.split(/\r?\n/);
+  const optionRows = lines.map((line, lineIndex) => {
+    const option = parseChoiceOptions(line)[0];
+    return option ? { ...option, lineIndex } : null;
+  }).filter(Boolean);
+  if (optionRows.length !== 8) return source;
+  const first = optionRows.slice(0, 4);
+  const repeated = optionRows.slice(4);
+  const labelsAreRepeated = first.map((item) => item.label).join('') === 'ABCD'
+    && repeated.map((item) => item.label).join('') === 'ABCD';
+  const contentsAreRepeated = first.every((item, index) => normalizeComparableText(item.text) === normalizeComparableText(repeated[index].text));
+  if (!labelsAreRepeated || !contentsAreRepeated) return source;
+  const duplicateLineIndexes = new Set(repeated.map((item) => item.lineIndex));
+  return lines.filter((_line, index) => !duplicateLineIndexes.has(index)).join('\n').trim();
+}
+
 function choiceQuestionQuality(exercise) {
   if (exercise?.type !== 'choice') return { valid: true, reasons: [], options: [] };
   const options = parseChoiceOptions(exercise.question);
@@ -52,4 +70,5 @@ module.exports = {
   isGeneratedExerciseValid,
   normalizeComparableText,
   parseChoiceOptions,
+  repairRepeatedChoiceOptions,
 };

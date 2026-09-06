@@ -1,7 +1,7 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
-const { choiceQuestionQuality, exerciseQuestionKey, parseChoiceOptions } = require('../lib/exercise-quality');
+const { choiceQuestionQuality, exerciseQuestionKey, parseChoiceOptions, repairRepeatedChoiceOptions } = require('../lib/exercise-quality');
 const { generateExercisesForBlueprint, parseGeneratedExercises } = require('../lib/ai');
 
 test('choice quality rejects a repeated A-D block before storage', () => {
@@ -12,6 +12,9 @@ test('choice quality rejects a repeated A-D block before storage', () => {
   assert.equal(parseChoiceOptions(exercise.question).length, 8);
   assert.match(quality.reasons.join('；'), /恰好|必须且只能/);
   assert.deepEqual(parseGeneratedExercises(JSON.stringify([exercise]), { types: ['choice'], count: 1, difficulty: 'medium' }), []);
+  const repaired = repairRepeatedChoiceOptions(exercise.question);
+  assert.equal(parseChoiceOptions(repaired).length, 4);
+  assert.equal(choiceQuestionQuality({ ...exercise, question: repaired }).valid, true);
 });
 
 test('choice quality preserves meaningful mathematical bracket differences', () => {
@@ -21,6 +24,7 @@ test('choice quality preserves meaningful mathematical bracket differences', () 
     answer: 'A',
   };
   assert.equal(choiceQuestionQuality(exercise).valid, true);
+  assert.equal(repairRepeatedChoiceOptions(exercise.question), exercise.question);
   assert.equal(choiceQuestionQuality({
     type: 'choice', question: '选择。\nA. 相同内容\nB. 相同内容\nC. 丙\nD. 丁', answer: 'A',
   }).valid, false);
