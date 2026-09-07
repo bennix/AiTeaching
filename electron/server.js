@@ -605,7 +605,23 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         return sendJson(response, 200, {
           settings: store.getSettings(),
           lessons: store.listLessons(),
-          students: store.state.students.map((student) => ({ ...student, email: studentEmailAddress(store, student) })),
+          students: store.state.students.map((student) => {
+            const reports = store.state.studentReports
+              .filter((report) => report.studentId === student.studentId && report.markdown)
+              .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')));
+            const personalized = store.state.exercises.filter((exercise) => exercise.targetStudentId === student.studentId);
+            const exerciseBatchIds = new Set(personalized.map((exercise) => exercise.generationBatchId || exercise.id));
+            return {
+              ...student,
+              email: studentEmailAddress(store, student),
+              reportCount: reports.length,
+              latestReportAt: reports[0]?.createdAt || '',
+              hasPublishedReport: reports.some((report) => report.published !== false),
+              exerciseBatchCount: exerciseBatchIds.size,
+              latestExerciseAt: personalized.sort((left, right) => String(right.generationCreatedAt || right.createdAt || '').localeCompare(String(left.generationCreatedAt || left.createdAt || '')))[0]?.generationCreatedAt || personalized[0]?.createdAt || '',
+              hasPublishedPersonalizedExercises: personalized.some((exercise) => exercise.published === true),
+            };
+          }),
           exerciseCount: store.state.exercises.length,
           submissionCount: store.state.submissions.length,
           attendanceCount: store.state.attendance.length,
@@ -633,13 +649,12 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const markdown = await generateClassLearningReport(store.getSettings({ includeKey: true }), analytics);
         const scope = analytics.filters;
         const scopeKey = reportScopeKey(scope);
-        const existing = store.state.classReports.find((report) => report.scopeKey === scopeKey);
         const report = {
-          id: existing?.id || crypto.randomUUID(), scopeKey,
+          id: crypto.randomUUID(), scopeKey,
           courseName: scope.courseName, className: scope.className, lessonId: scope.lessonId,
           markdown, summary: analytics.summary, createdAt: new Date().toISOString(),
         };
-        if (existing) Object.assign(existing, report); else store.state.classReports.push(report);
+        store.state.classReports.push(report);
         store.save();
         return sendJson(response, 200, { ok: true, report });
       }
@@ -873,11 +888,39 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (!student) return sendJson(response, 404, { error: '未找到学生' });
         const records = store.state.submissions.filter((item) => item.studentId === studentId).map((submission) => ({ ...submission, exercise: store.state.exercises.find((item) => item.id === submission.exerciseId) }));
         const markdown = await generateStudentReport(store.getSettings({ includeKey: true }), student, records);
-        const existing = store.state.studentReports.find((item) => item.studentId === studentId);
-        const report = { id: existing?.id || crypto.randomUUID(), studentId, markdown, published: false, publishedAt: null, createdAt: new Date().toISOString() };
-        if (existing) Object.assign(existing, report); else store.state.studentReports.push(report);
+        const report = { id: crypto.randomUUID(), studentId, markdown, published: false, publishedAt: null, createdAt: new Date().toISOString() };
+        store.state.studentReports.push(report);
         store.save();
         return sendJson(response, 200, { ok: true, report });
+      }
+      const reportHistoryMatch = pathname.match(/^\/api\/students\/([^/]+)\/reports$/);
+      if (request.method === 'GET' && reportHistoryMatch) {
+        const studentId = decodeURIComponent(reportHistoryMatch[1]);
+        if (!store.state.students.some((item) => item.studentId === studentId)) return sendJson(response, 404, { error: '未找到学生' });
+        const reports = store.state.studentReports
+          .filter((item) => item.studentId === studentId && item.markdown)
+          .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')));
+        return sendJson(response, 200, { reports });
+      }
+      const exerciseHistoryMatch = pathname.match(/^\/api\/students\/([^/]+)\/exercise-batches$/);
+      if (request.method === 'GET' && exerciseHistoryMatch) {
+        const studentId = decodeURIComponent(exerciseHistoryMatch[1]);
+        if (!store.state.students.some((item) => item.studentId === studentId)) return sendJson(response, 404, { error: '未找到学生' });
+        const grouped = new Map();
+        for (const exercise of store.state.exercises.filter((item) => item.targetStudentId === studentId)) {
+          const batchId = exercise.generationBatchId || exercise.id;
+          if (!grouped.has(batchId)) grouped.set(batchId, {
+            id: batchId,
+            createdAt: exercise.generationCreatedAt || exercise.createdAt || '',
+            published: true,
+            exercises: [],
+          });
+          const batch = grouped.get(batchId);
+          batch.exercises.push(exercise);
+          batch.published = batch.published && exercise.published === true;
+        }
+        const batches = [...grouped.values()].sort((left, right) => String(right.createdAt).localeCompare(String(left.createdAt)));
+        return sendJson(response, 200, { batches });
       }
       const targetedMatch = pathname.match(/^\/api\/students\/([^/]+)\/exercises$/);
       if (request.method === 'POST' && targetedMatch) {
@@ -893,14 +936,21 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
           weakPoints,
           excludeQuestions: store.state.exercises.filter((item) => item.lessonId === lesson.id).map((item) => item.question),
         });
-        const records = exerciseRecords(generated, lesson.id, { targetStudentId: studentId, published: false });
+        const generationBatchId = crypto.randomUUID();
+        const generationCreatedAt = new Date().toISOString();
+        const records = exerciseRecords(generated, lesson.id, { targetStudentId: studentId, published: false })
+          .map((item) => ({ ...item, generationBatchId, generationCreatedAt }));
         store.addExercises(records);
-        return sendJson(response, 201, { ok: true, count: records.length, exercises: records });
+        return sendJson(response, 201, { ok: true, count: records.length, batchId: generationBatchId, createdAt: generationCreatedAt, exercises: records });
       }
       const publishReportMatch = pathname.match(/^\/api\/students\/([^/]+)\/publish-report$/);
       if (request.method === 'POST' && publishReportMatch) {
         const studentId = decodeURIComponent(publishReportMatch[1]);
-        const report = store.state.studentReports.find((item) => item.studentId === studentId);
+        const body = await readJson(request);
+        const reports = store.state.studentReports
+          .filter((item) => item.studentId === studentId)
+          .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')));
+        const report = body.reportId ? reports.find((item) => item.id === body.reportId) : reports[0];
         if (!report?.markdown) return sendJson(response, 404, { error: '请先生成学生学习诊断报告' });
         report.published = true;
         report.publishedAt = new Date().toISOString();
@@ -921,8 +971,12 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
       const reportEmailMatch = pathname.match(/^\/api\/students\/([^/]+)\/email-report$/);
       if (request.method === 'POST' && reportEmailMatch) {
         const studentId = decodeURIComponent(reportEmailMatch[1]);
+        const body = await readJson(request);
         const student = store.state.students.find((item) => item.studentId === studentId);
-        const report = store.state.studentReports.find((item) => item.studentId === studentId);
+        const reports = store.state.studentReports
+          .filter((item) => item.studentId === studentId)
+          .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')));
+        const report = body.reportId ? reports.find((item) => item.id === body.reportId) : reports[0];
         if (!student) throw new Error('未找到学生');
         if (!report?.markdown) throw new Error('请先生成学生学习诊断报告');
         await sendConfiguredMail(store, { to: studentEmailAddress(store, student), subject: `${student.courseName || '课程'} 学习诊断 - ${student.name}`, text: report.markdown });
@@ -1054,7 +1108,10 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         return sendJson(response, 200, {
           student, availableCourses, selectedCourseId: course?.id || '', lessons, exercises, submissions,
           attendance: store.state.attendance.filter((item) => item.studentId === student.studentId && lessonIds.has(item.lessonId)),
-          materials, classMaterials, report: store.state.studentReports.find((item) => item.studentId === student.studentId && item.published !== false) || null,
+          materials, classMaterials,
+          report: store.state.studentReports
+            .filter((item) => item.studentId === student.studentId && item.published !== false)
+            .sort((left, right) => String(right.createdAt || '').localeCompare(String(left.createdAt || '')))[0] || null,
         });
       }
       if (request.method === 'POST' && pathname === '/api/student/attendance') {

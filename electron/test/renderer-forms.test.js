@@ -113,12 +113,12 @@ test('student page selects an existing course and shows all course materials', (
 test('teacher analytics view exposes filters, charts, student detail and AI report generation', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
   assert.match(html, /data-view="analytics"/);
-  for (const id of ['analytics-course', 'analytics-class', 'analytics-lesson', 'analytics-trend-chart', 'analytics-knowledge-chart', 'analytics-student-table', 'analytics-report-content', 'analytics-download-button']) {
+  for (const id of ['analytics-course', 'analytics-class', 'analytics-lesson', 'analytics-trend-chart', 'analytics-knowledge-chart', 'analytics-student-table', 'analytics-report-content', 'analytics-download-button', 'analytics-report-history', 'analytics-report-badge']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(source, /api\(`\/api\/analytics/);
   assert.match(source, /api\('\/api\/analytics\/report'/);
-  assert.match(source, /\/api\/analytics\/report\/\$\{encodeURIComponent\(latestReport\.id\)\}\/download/);
+  assert.match(source, /\/api\/analytics\/report\/\$\{encodeURIComponent\(selectedReport\.id\)\}\/download/);
   assert.match(source, /function renderTrendChart/);
   assert.match(source, /function renderKnowledgeChart/);
   assert.match(source, /RichText\.render\(\$\('#analytics-report-content'\)/);
@@ -141,9 +141,13 @@ test('student tools stay compact and student report and exercise previews can be
   assert.match(html, /class="panel stack student-tools-panel"/);
   assert.match(html, /class="student-add-card"/);
   assert.match(css, /\.student-grid\{align-items:start\}/);
-  for (const id of ['report-send-button', 'report-email-button', 'personalized-exercise-dialog', 'personalized-exercise-send']) {
+  for (const id of ['report-history-select', 'report-status', 'report-send-button', 'report-email-button', 'personalized-exercise-dialog', 'personalized-exercise-history', 'personalized-exercise-status', 'personalized-exercise-send']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
+  assert.match(source, /data-view-reports/);
+  assert.match(source, /data-view-exercise-batches/);
+  assert.match(source, /AI 报告已生成/);
+  assert.match(source, /个性化习题已生成/);
   assert.match(source, /\/publish-report/);
   assert.match(source, /\/publish-exercises/);
 });

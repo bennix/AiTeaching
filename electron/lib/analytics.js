@@ -136,10 +136,11 @@ function buildLearningAnalytics(state = {}, requestedFilters = {}) {
   const answeredCount = studentRows.reduce((sum, student) => sum + student.answeredCount, 0);
   const correctCount = studentRows.reduce((sum, student) => sum + student.correctCount, 0);
   const scopeKey = reportScopeKey({ courseName, className, lessonId });
-  const latestReport = allReports
+  const reports = allReports
     .filter((report) => report.scopeKey === scopeKey
       || (text(report.courseName) === courseName && text(report.className) === className && text(report.lessonId) === lessonId))
-    .sort((left, right) => text(right.createdAt).localeCompare(text(left.createdAt)))[0] || null;
+    .sort((left, right) => text(right.createdAt).localeCompare(text(left.createdAt)));
+  const latestReport = reports[0] || null;
 
   return {
     filters: {
@@ -172,6 +173,7 @@ function buildLearningAnalytics(state = {}, requestedFilters = {}) {
     knowledgePoints,
     students: studentRows,
     latestReport,
+    reports,
   };
 }
 

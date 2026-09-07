@@ -174,7 +174,7 @@
         </div>
 
         <div class="panel analytics-report-panel">
-          <div class="panel-heading"><div><h2>AI 学情分析报告</h2><p id="analytics-report-meta">选择范围后，可基于当前真实统计生成报告</p></div><span class="badge">Markdown · LaTeX</span></div>
+          <div class="panel-heading"><div><h2>AI 学情分析报告</h2><p id="analytics-report-meta">选择范围后，可基于当前真实统计生成报告</p></div><div class="report-history-tools"><span id="analytics-report-badge" class="badge">尚未生成</span><select id="analytics-report-history" aria-label="查看历史学情报告" hidden></select></div></div>
           <div id="analytics-report-content" class="document-content markdown-body analytics-report-content"></div>
         </div>
       </section>
@@ -229,12 +229,14 @@
 
   <dialog id="report-dialog">
     <div class="dialog-heading"><div><span class="badge">AI 学习诊断</span><h2 id="report-title">学生报告</h2></div><button id="report-close" class="icon-button">×</button></div>
+    <div class="report-history-bar"><label><span>报告记录</span><select id="report-history-select"></select></label><span id="report-status" class="badge"></span></div>
     <div class="dialog-actions"><button id="report-send-button" class="button primary" type="button">发送给学生</button><button id="report-email-button" class="button secondary" type="button">发送到学生邮箱</button></div>
     <div id="report-content" class="document-content markdown-body"></div>
   </dialog>
 
   <dialog id="personalized-exercise-dialog">
     <div class="dialog-heading"><div><span class="badge">AI 个性化练习</span><h2 id="personalized-exercise-title">个性化习题</h2><p>确认题目后再发送到该学生的学习中心</p></div><button id="personalized-exercise-close" class="icon-button">×</button></div>
+    <div class="report-history-bar"><label><span>生成记录</span><select id="personalized-exercise-history"></select></label><span id="personalized-exercise-status" class="badge"></span></div>
     <div class="dialog-actions"><button id="personalized-exercise-send" class="button primary" type="button">发送给学生</button></div>
     <div id="personalized-exercise-content" class="document-content markdown-body"></div>
   </dialog>

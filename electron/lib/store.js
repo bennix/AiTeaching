@@ -415,6 +415,7 @@ class JsonStore {
     this.state.submissions = this.state.submissions.filter((item) => item.studentId !== studentId);
     this.state.attendance = this.state.attendance.filter((item) => item.studentId !== studentId);
     this.state.exercises = this.state.exercises.filter((item) => item.targetStudentId !== studentId);
+    this.state.studentReports = this.state.studentReports.filter((item) => item.studentId !== studentId);
     this.save();
   }
 

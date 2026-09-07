@@ -264,8 +264,22 @@ test('教师可以查看班级学情图表数据并生成可保存的 AI 报告'
   assert.match(downloadedReport, /data:font\/woff2;base64,/);
   assert.doesNotMatch(downloadedReport, /(?:src|href)="\//);
 
+  const generatedAgain = await json(`${base}/api/analytics/report`, {
+    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' },
+    body: JSON.stringify({ courseName: '数学', className: '一班' }),
+  });
+  assert.notEqual(generatedAgain.body.report.id, generated.body.report.id);
+  assert.equal(server.store.state.classReports.length, 2);
+
   const refreshed = await json(`${base}/api/analytics?courseName=${encodeURIComponent('数学')}&className=${encodeURIComponent('一班')}`, { headers: { Cookie: adminCookie } });
   assert.match(refreshed.body.latestReport.markdown, /班级学情报告/);
+  assert.equal(refreshed.body.reports.length, 2);
+
+  const studentReportOne = await json(`${base}/api/students/S1/report`, { method: 'POST', headers: { Cookie: adminCookie } });
+  const studentReportTwo = await json(`${base}/api/students/S1/report`, { method: 'POST', headers: { Cookie: adminCookie } });
+  assert.notEqual(studentReportOne.body.report.id, studentReportTwo.body.report.id);
+  const studentReportHistory = await json(`${base}/api/students/S1/reports`, { headers: { Cookie: adminCookie } });
+  assert.equal(studentReportHistory.body.reports.length, 2);
 });
 
 test('学生报告与个性化习题经教师确认发送后才在学生端可见', async (context) => {
@@ -276,28 +290,45 @@ test('学生报告与个性化习题经教师确认发送后才在学生端可�
   const base = `http://127.0.0.1:${server.port}`;
   server.store.addLessons([{ id: 'send-week', title: '程序设计第 1 周', courseName: '程序设计', className: '一班', classNames: ['一班'], teachingWeek: 1, status: 'done', aiResult: '教学内容' }]);
   server.store.upsertStudent({ studentId: 'SEND001', name: '发送测试', courseName: '程序设计', className: '一班' });
-  server.store.addExercises([{ id: 'personal-draft', lessonId: 'send-week', targetStudentId: 'SEND001', published: false, type: 'choice', question: '1 + 1 = ?', answer: '2' }]);
-  server.store.state.studentReports.push({ id: 'report-draft', studentId: 'SEND001', markdown: '# 学习诊断', published: false });
+  server.store.addExercises([
+    { id: 'personal-draft', lessonId: 'send-week', targetStudentId: 'SEND001', generationBatchId: 'batch-new', generationCreatedAt: '2026-09-07T02:00:00.000Z', published: false, type: 'choice', question: '1 + 1 = ?', answer: '2' },
+    { id: 'personal-draft-2', lessonId: 'send-week', targetStudentId: 'SEND001', generationBatchId: 'batch-new', generationCreatedAt: '2026-09-07T02:00:00.000Z', published: false, type: 'choice', question: '2 + 2 = ?', answer: '4' },
+    { id: 'personal-old', lessonId: 'send-week', targetStudentId: 'SEND001', published: true, createdAt: '2026-09-06T02:00:00.000Z', type: 'choice', question: '0 + 1 = ?', answer: '1' },
+  ]);
+  server.store.state.studentReports.push(
+    { id: 'report-old', studentId: 'SEND001', markdown: '# 旧学习诊断', published: false, createdAt: '2026-09-06T02:00:00.000Z' },
+    { id: 'report-draft', studentId: 'SEND001', markdown: '# 新学习诊断', published: false, createdAt: '2026-09-07T02:00:00.000Z' },
+  );
   server.store.save();
 
   const adminLogin = await json(`${base}/api/auth/admin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'admin' }) });
   const adminCookie = adminLogin.response.headers.get('set-cookie').split(';')[0];
   const adminState = await json(`${base}/api/state`, { headers: { Cookie: adminCookie } });
-  assert.equal(adminState.body.students.find((item) => item.studentId === 'SEND001').email, 'SEND001@m.fudan.edu.cn');
+  const studentSummary = adminState.body.students.find((item) => item.studentId === 'SEND001');
+  assert.equal(studentSummary.email, 'SEND001@m.fudan.edu.cn');
+  assert.equal(studentSummary.reportCount, 2);
+  assert.equal(studentSummary.exerciseBatchCount, 2);
+  const reportHistory = await json(`${base}/api/students/SEND001/reports`, { headers: { Cookie: adminCookie } });
+  assert.deepEqual(reportHistory.body.reports.map((item) => item.id), ['report-draft', 'report-old']);
+  const exerciseHistory = await json(`${base}/api/students/SEND001/exercise-batches`, { headers: { Cookie: adminCookie } });
+  assert.deepEqual(exerciseHistory.body.batches.map((item) => item.id), ['batch-new', 'personal-old']);
+  assert.equal(exerciseHistory.body.batches[0].exercises.length, 2);
   const studentLogin = await json(`${base}/api/auth/student`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: 'SEND001', className: '一班' }) });
   const studentCookie = studentLogin.response.headers.get('set-cookie').split(';')[0];
   const before = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
   assert.equal(before.body.report, null);
-  assert.equal(before.body.exercises.length, 0);
+  assert.deepEqual(before.body.exercises.map((item) => item.id), ['personal-old']);
 
-  const sentReport = await json(`${base}/api/students/SEND001/publish-report`, { method: 'POST', headers: { Cookie: adminCookie } });
+  const sentReport = await json(`${base}/api/students/SEND001/publish-report`, {
+    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId: 'report-old' }),
+  });
   assert.equal(sentReport.body.report.published, true);
   const sentExercises = await json(`${base}/api/students/SEND001/publish-exercises`, {
-    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseIds: ['personal-draft'] }),
+    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseIds: ['personal-draft', 'personal-draft-2'] }),
   });
-  assert.equal(sentExercises.body.count, 1);
+  assert.equal(sentExercises.body.count, 2);
 
   const after = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
-  assert.match(after.body.report.markdown, /学习诊断/);
-  assert.deepEqual(after.body.exercises.map((item) => item.id), ['personal-draft']);
+  assert.match(after.body.report.markdown, /旧学习诊断/);
+  assert.deepEqual(after.body.exercises.map((item) => item.id), ['personal-draft', 'personal-draft-2', 'personal-old']);
 });

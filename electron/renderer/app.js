@@ -1,4 +1,4 @@
-const state = { data: null, analytics: null, analyticsFilters: {}, activeLesson: null, activeTab: 'ai', activeLessonGroupKey: '', activeStudentClassKey: '', activeStudentReport: null, personalizedExerciseDraft: null, poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
+const state = { data: null, analytics: null, analyticsFilters: {}, activeClassReportId: '', activeLesson: null, activeTab: 'ai', activeLessonGroupKey: '', activeStudentClassKey: '', activeStudentReport: null, personalizedExerciseDraft: null, poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
 const viewMeta = {
   lessons: ['教案与教学周', '管理单周教案与整学期教学安排'],
   import: ['导入教案', '支持 PDF、Word 和 Markdown 教案'],
@@ -237,6 +237,44 @@ function updateApiKeyInvite() {
   $('#api-key-invite').hidden = Boolean(hasApplicableKey || !isZenMuxBaseUrl(currentBaseUrl));
 }
 
+function reportTime(value) {
+  return value ? new Date(value).toLocaleString('zh-CN', { hour12: false }) : '历史记录';
+}
+
+function showStudentReport(student, reports, selectedId = '') {
+  const report = reports.find((item) => item.id === selectedId) || reports[0];
+  if (!report) return toast('还没有已生成的学生报告', true);
+  const isPublished = report.published !== false;
+  state.activeStudentReport = { studentId: student.studentId, student, report, reports };
+  $('#report-title').textContent = `${student.name || student.studentId} · 学习诊断`;
+  $('#report-history-select').innerHTML = reports.map((item, index) => `<option value="${escapeHtml(item.id)}" ${item.id === report.id ? 'selected' : ''}>${reportTime(item.createdAt)}${index === 0 ? ' · 最新' : ''}${item.published !== false ? ' · 已发送' : ' · 草稿'}</option>`).join('');
+  $('#report-status').textContent = isPublished ? '✓ 已生成 · 已发送' : '✓ 已生成 · 未发送';
+  $('#report-status').classList.toggle('success', isPublished);
+  $('#report-send-button').textContent = isPublished ? '已发送给学生' : '发送给学生';
+  $('#report-send-button').disabled = isPublished;
+  $('#report-email-button').disabled = !student.email;
+  RichText.render($('#report-content'), report.markdown, '暂无报告内容。');
+  if (!$('#report-dialog').open) $('#report-dialog').showModal();
+}
+
+function personalizedBatchMarkdown(batch) {
+  return (batch?.exercises || []).map((exercise, index) => `## ${index + 1}. ${exerciseTypeLabel(exercise.type)}\n\n${exercise.question}\n\n**参考答案：** ${exercise.answer}\n\n**解析：** ${exercise.explanation || '暂无解析'}`).join('\n\n---\n\n');
+}
+
+function showPersonalizedExerciseBatch(student, batches, selectedId = '') {
+  const batch = batches.find((item) => item.id === selectedId) || batches[0];
+  if (!batch) return toast('还没有已生成的个性化习题', true);
+  state.personalizedExerciseDraft = { studentId: student.studentId, student, exercises: batch.exercises || [], batch, batches };
+  $('#personalized-exercise-title').textContent = `${student.name || student.studentId} · 个性化习题`;
+  $('#personalized-exercise-history').innerHTML = batches.map((item, index) => `<option value="${escapeHtml(item.id)}" ${item.id === batch.id ? 'selected' : ''}>${reportTime(item.createdAt)}${index === 0 ? ' · 最新' : ''}${item.published ? ' · 已发送' : ' · 草稿'}</option>`).join('');
+  $('#personalized-exercise-status').textContent = batch.published ? '✓ 已生成 · 已发送' : '✓ 已生成 · 未发送';
+  $('#personalized-exercise-status').classList.toggle('success', Boolean(batch.published));
+  RichText.render($('#personalized-exercise-content'), personalizedBatchMarkdown(batch), 'AI 没有返回可用题目。');
+  $('#personalized-exercise-send').disabled = batch.published || !batch.exercises?.length;
+  $('#personalized-exercise-send').textContent = batch.published ? '已发送给学生' : '发送给学生';
+  if (!$('#personalized-exercise-dialog').open) $('#personalized-exercise-dialog').showModal();
+}
+
 function renderStudents() {
   const students = state.data.students || [];
   const classGroups = studentClassGroups(students);
@@ -259,8 +297,8 @@ function renderStudents() {
   $('#delete-selected-course').disabled = !selectedGroup?.courseName;
   $('#student-list').innerHTML = selectedGroup ? selectedGroup.students.map((student) => `
     <article class="student-card">
-      <div><h3>${escapeHtml(student.name)} <span class="badge">${escapeHtml(student.studentId)}</span></h3><p>${escapeHtml(student.courseName || '未指定课程')} · ${escapeHtml(student.className || '未分班')} · ${escapeHtml(student.email || '未填写邮箱')}</p></div>
-      <div class="student-card-actions"><button class="button secondary" data-report-student="${escapeHtml(student.studentId)}">AI 报告</button><button class="button secondary" data-target-student="${escapeHtml(student.studentId)}">个性化习题</button><button class="button secondary" data-email-student="${escapeHtml(student.studentId)}">发送报告</button><button class="button danger" data-delete-student="${escapeHtml(student.studentId)}">删除</button></div>
+      <div><h3>${escapeHtml(student.name)} <span class="badge">${escapeHtml(student.studentId)}</span></h3><p>${escapeHtml(student.courseName || '未指定课程')} · ${escapeHtml(student.className || '未分班')} · ${escapeHtml(student.email || '未填写邮箱')}</p>${student.reportCount ? `<span class="report-generated-mark">✓ AI 报告已生成 ${student.reportCount} 份</span>` : ''}${student.exerciseBatchCount ? `<span class="report-generated-mark">✓ 个性化习题已生成 ${student.exerciseBatchCount} 批</span>` : ''}</div>
+      <div class="student-card-actions"><button class="button secondary" data-report-student="${escapeHtml(student.studentId)}">生成 AI 报告</button>${student.reportCount ? `<button class="button secondary" data-view-reports="${escapeHtml(student.studentId)}">查看报告 (${student.reportCount})</button>` : ''}<button class="button secondary" data-target-student="${escapeHtml(student.studentId)}">生成个性化习题</button>${student.exerciseBatchCount ? `<button class="button secondary" data-view-exercise-batches="${escapeHtml(student.studentId)}">查看习题 (${student.exerciseBatchCount})</button>` : ''}<button class="button secondary" data-email-student="${escapeHtml(student.studentId)}" ${student.reportCount ? '' : 'disabled'}>发送报告</button><button class="button danger" data-delete-student="${escapeHtml(student.studentId)}">删除</button></div>
     </article>`).join('') : '<div class="empty">还没有学生，请手动添加或导入名册。</div>';
   $$('[data-student-class-key]').forEach((button) => button.addEventListener('click', () => {
     state.activeStudentClassKey = button.dataset.studentClassKey;
@@ -275,28 +313,36 @@ function renderStudents() {
     try {
       const result = await api(`/api/students/${encodeURIComponent(button.dataset.reportStudent)}/report`, { method: 'POST' });
       const student = students.find((item) => item.studentId === button.dataset.reportStudent);
-      $('#report-title').textContent = `${student?.name || button.dataset.reportStudent} · 学习诊断`;
-      state.activeStudentReport = { studentId: button.dataset.reportStudent, student, report: result.report };
-      $('#report-send-button').textContent = result.report.published ? '已发送给学生' : '发送给学生';
-      $('#report-send-button').disabled = Boolean(result.report.published);
-      $('#report-email-button').disabled = !student?.email;
-      RichText.render($('#report-content'), result.report.markdown, '暂无报告内容。');
-      $('#report-dialog').showModal();
+      const history = await api(`/api/students/${encodeURIComponent(button.dataset.reportStudent)}/reports`);
+      showStudentReport(student, history.reports, result.report.id);
+      await refresh();
     }
     catch (error) { toast(error.message, true); } finally { button.disabled = false; }
+  }));
+  $$('[data-view-reports]').forEach((button) => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const student = students.find((item) => item.studentId === button.dataset.viewReports);
+      const history = await api(`/api/students/${encodeURIComponent(button.dataset.viewReports)}/reports`);
+      showStudentReport(student, history.reports);
+    } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
   }));
   $$('[data-target-student]').forEach((button) => button.addEventListener('click', async () => {
     button.disabled = true;
     try {
       const student = students.find((item) => item.studentId === button.dataset.targetStudent);
       const result = await api(`/api/students/${encodeURIComponent(button.dataset.targetStudent)}/exercises`, { method: 'POST' });
-      state.personalizedExerciseDraft = { studentId: button.dataset.targetStudent, student, exercises: result.exercises || [] };
-      $('#personalized-exercise-title').textContent = `${student?.name || button.dataset.targetStudent} · 个性化习题`;
-      const markdown = state.personalizedExerciseDraft.exercises.map((exercise, index) => `## ${index + 1}. ${exerciseTypeLabel(exercise.type)}\n\n${exercise.question}\n\n**参考答案：** ${exercise.answer}\n\n**解析：** ${exercise.explanation || '暂无解析'}`).join('\n\n---\n\n');
-      RichText.render($('#personalized-exercise-content'), markdown, 'AI 没有返回可用题目。');
-      $('#personalized-exercise-send').disabled = !state.personalizedExerciseDraft.exercises.length;
-      $('#personalized-exercise-send').textContent = '发送给学生';
-      $('#personalized-exercise-dialog').showModal();
+      const history = await api(`/api/students/${encodeURIComponent(button.dataset.targetStudent)}/exercise-batches`);
+      showPersonalizedExerciseBatch(student, history.batches, result.batchId);
+      await refresh();
+    } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
+  }));
+  $$('[data-view-exercise-batches]').forEach((button) => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const student = students.find((item) => item.studentId === button.dataset.viewExerciseBatches);
+      const history = await api(`/api/students/${encodeURIComponent(button.dataset.viewExerciseBatches)}/exercise-batches`);
+      showPersonalizedExerciseBatch(student, history.batches);
     } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
   }));
   $$('[data-email-student]').forEach((button) => button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/students/${encodeURIComponent(button.dataset.emailStudent)}/email-report`, { method: 'POST' }); toast('学生报告邮件已发送'); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } }));
@@ -353,7 +399,7 @@ function renderKnowledgeChart(items) {
 function renderAnalytics() {
   const analytics = state.analytics;
   if (!analytics) return;
-  const { filters, summary, trends, knowledgePoints, students, latestReport } = analytics;
+  const { filters, summary, trends, knowledgePoints, students, latestReport, reports = [] } = analytics;
   $('#analytics-course').innerHTML = filters.courses.length
     ? filters.courses.map((course) => analyticsOption(course, course, filters.courseName)).join('')
     : analyticsOption('', '暂无已完成课程', '', true);
@@ -377,16 +423,23 @@ function renderAnalytics() {
   renderKnowledgeChart(knowledgePoints);
 
   $('#analytics-student-table').innerHTML = students.length ? `<table class="analytics-table"><thead><tr><th>学生</th><th>签到</th><th>完成</th><th>正确</th><th>薄弱知识点</th></tr></thead><tbody>${students.map((student) => `<tr><td><strong>${escapeHtml(student.name)}</strong><small>${escapeHtml(student.studentId)}</small></td><td><span class="metric-pill ${student.attendanceRate < 80 ? 'risk' : ''}">${student.attendanceRate}%</span><small>${student.attendancePresent}/${student.attendanceExpected} 人次</small></td><td><span class="metric-pill ${student.completionRate < 80 ? 'risk' : ''}">${student.completionRate}%</span><small>${student.answeredCount}/${student.assignmentCount} 题次</small></td><td><span class="metric-pill ${student.answeredCount && student.accuracyRate < 60 ? 'risk' : ''}">${student.accuracyRate}%</span><small>${student.correctCount}/${student.answeredCount} 次</small></td><td>${student.weakPoints.length ? student.weakPoints.map((point) => `<span class="weak-chip">${escapeHtml(point)}</span>`).join('') : '<span class="muted">暂无实际错题</span>'}</td></tr>`).join('')}</tbody></table>` : '<div class="empty">当前筛选范围没有学生。</div>';
-  $('#analytics-report-meta').textContent = latestReport?.createdAt
-    ? `生成于 ${new Date(latestReport.createdAt).toLocaleString()} · 基于当前范围保存`
+  const selectedReport = reports.find((report) => report.id === state.activeClassReportId) || latestReport;
+  state.activeClassReportId = selectedReport?.id || '';
+  const historySelect = $('#analytics-report-history');
+  historySelect.hidden = reports.length === 0;
+  historySelect.innerHTML = reports.map((report, index) => `<option value="${escapeHtml(report.id)}" ${report.id === selectedReport?.id ? 'selected' : ''}>${reportTime(report.createdAt)}${index === 0 ? ' · 最新' : ''}</option>`).join('');
+  $('#analytics-report-badge').textContent = reports.length ? `✓ 已生成 ${reports.length} 份` : '尚未生成';
+  $('#analytics-report-badge').classList.toggle('success', reports.length > 0);
+  $('#analytics-report-meta').textContent = selectedReport?.createdAt
+    ? `生成于 ${new Date(selectedReport.createdAt).toLocaleString()} · 系统已保存，可从右侧查看历史记录`
     : '尚未生成报告；AI 会严格依据上方真实统计给出分析与建议';
   const downloadButton = $('#analytics-download-button');
-  const hasReport = Boolean(latestReport?.id && latestReport?.markdown);
-  downloadButton.href = hasReport ? `/api/analytics/report/${encodeURIComponent(latestReport.id)}/download` : '#';
+  const hasReport = Boolean(selectedReport?.id && selectedReport?.markdown);
+  downloadButton.href = hasReport ? `/api/analytics/report/${encodeURIComponent(selectedReport.id)}/download` : '#';
   downloadButton.classList.toggle('disabled', !hasReport);
   downloadButton.setAttribute('aria-disabled', String(!hasReport));
   downloadButton.tabIndex = hasReport ? 0 : -1;
-  RichText.render($('#analytics-report-content'), latestReport?.markdown || '', '点击“AI 生成学情报告”，获取薄弱知识点、重点关注学生与下一阶段教学建议。');
+  RichText.render($('#analytics-report-content'), selectedReport?.markdown || '', '点击“AI 生成学情报告”，获取薄弱知识点、重点关注学生与下一阶段教学建议。');
 }
 
 let analyticsRequestVersion = 0;
@@ -637,6 +690,10 @@ $('#refresh-button').addEventListener('click', async () => {
 $('#analytics-course').addEventListener('change', (event) => loadAnalytics({ courseName: event.target.value, className: '', lessonId: '' }).catch((error) => toast(error.message, true)));
 $('#analytics-class').addEventListener('change', (event) => loadAnalytics({ className: event.target.value }).catch((error) => toast(error.message, true)));
 $('#analytics-lesson').addEventListener('change', (event) => loadAnalytics({ lessonId: event.target.value }).catch((error) => toast(error.message, true)));
+$('#analytics-report-history').addEventListener('change', (event) => {
+  state.activeClassReportId = event.currentTarget.value;
+  renderAnalytics();
+});
 $('#analytics-refresh-button').addEventListener('click', (event) => {
   event.currentTarget.disabled = true;
   loadAnalytics().catch((error) => toast(error.message, true)).finally(() => { event.currentTarget.disabled = false; });
@@ -646,6 +703,7 @@ $('#analytics-report-button').addEventListener('click', async (event) => {
   button.disabled = true;
   button.textContent = 'AI 正在分析…';
   try {
+    state.activeClassReportId = '';
     await api('/api/analytics/report', {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify(state.analyticsFilters),
@@ -907,13 +965,22 @@ $('#settings-form').exerciseReviewModel.addEventListener('input', (event) => syn
 
 $('#dialog-close').addEventListener('click', () => { closeLessonStream(); $('#lesson-dialog').close(); });
 $('#report-close').addEventListener('click', () => $('#report-dialog').close());
+$('#report-history-select').addEventListener('change', (event) => {
+  if (!state.activeStudentReport) return;
+  showStudentReport(state.activeStudentReport.student, state.activeStudentReport.reports, event.currentTarget.value);
+});
 $('#report-send-button').addEventListener('click', async (event) => {
   if (!state.activeStudentReport) return;
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    await api(`/api/students/${encodeURIComponent(state.activeStudentReport.studentId)}/publish-report`, { method: 'POST' });
-    button.textContent = '已发送给学生';
+    const result = await api(`/api/students/${encodeURIComponent(state.activeStudentReport.studentId)}/publish-report`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reportId: state.activeStudentReport.report.id }),
+    });
+    Object.assign(state.activeStudentReport.report, result.report);
+    showStudentReport(state.activeStudentReport.student, state.activeStudentReport.reports, result.report.id);
+    await refresh();
     toast('学习诊断已发送到学生学习中心');
   } catch (error) { button.disabled = false; toast(error.message, true); }
 });
@@ -921,11 +988,21 @@ $('#report-email-button').addEventListener('click', async (event) => {
   if (!state.activeStudentReport) return;
   const button = event.currentTarget;
   button.disabled = true;
-  try { await api(`/api/students/${encodeURIComponent(state.activeStudentReport.studentId)}/email-report`, { method: 'POST' }); toast('学生报告邮件已发送'); }
+  try {
+    await api(`/api/students/${encodeURIComponent(state.activeStudentReport.studentId)}/email-report`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ reportId: state.activeStudentReport.report.id }),
+    });
+    toast('学生报告邮件已发送');
+  }
   catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }
 });
 $('#personalized-exercise-close').addEventListener('click', () => $('#personalized-exercise-dialog').close());
+$('#personalized-exercise-history').addEventListener('change', (event) => {
+  if (!state.personalizedExerciseDraft) return;
+  showPersonalizedExerciseBatch(state.personalizedExerciseDraft.student, state.personalizedExerciseDraft.batches, event.currentTarget.value);
+});
 $('#personalized-exercise-send').addEventListener('click', async (event) => {
   if (!state.personalizedExerciseDraft?.exercises?.length) return;
   const button = event.currentTarget;
@@ -935,7 +1012,10 @@ $('#personalized-exercise-send').addEventListener('click', async (event) => {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ exerciseIds: state.personalizedExerciseDraft.exercises.map((item) => item.id) }),
     });
-    button.textContent = '已发送给学生';
+    for (const exercise of state.personalizedExerciseDraft.exercises) exercise.published = true;
+    state.personalizedExerciseDraft.batch.published = true;
+    showPersonalizedExerciseBatch(state.personalizedExerciseDraft.student, state.personalizedExerciseDraft.batches, state.personalizedExerciseDraft.batch.id);
+    await refresh();
     toast(`已发送 ${result.count} 道个性化习题`);
   } catch (error) { button.disabled = false; toast(error.message, true); }
 });
