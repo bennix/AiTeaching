@@ -10,7 +10,7 @@ const { JsonStore } = require('./lib/store');
 const { buildLessonRecords, extractDocumentText } = require('./lib/documents');
 const { normalizeUploadFilename } = require('./lib/filenames');
 const { buildLearningAnalytics, reportScopeKey } = require('./lib/analytics');
-const { catalogPairKey, sameCatalogName } = require('./lib/catalog-identity');
+const { catalogPairKey, normalizeCatalogName, sameCatalogName } = require('./lib/catalog-identity');
 const { establishedCourseClasses, lessonClassNames } = require('./lib/teaching-catalog');
 const {
   fetchModelCatalog,
@@ -81,11 +81,19 @@ function visibleLessonsForStudent(store, student, course = null) {
   if (course) {
     return store.state.lessons.filter((lesson) => lessonHasTeachingContent(lesson)
       && sameCatalogName(lesson.courseName, course.courseName)
-      && lessonClassNames(lesson).some((className) => sameCatalogName(className, course.className)));
+      && lessonClassNames(lesson).some((className) => sameCatalogName(className, course.className)))
+      .sort(compareLessonsNewestFirst);
   }
   return store.state.lessons.filter((lesson) => lessonHasTeachingContent(lesson)
     && (!student.courseName || !lesson.courseName || sameCatalogName(lesson.courseName, student.courseName))
-    && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).some((className) => sameCatalogName(className, student.className))));
+    && (!student.className || lessonClassNames(lesson).includes('') || lessonClassNames(lesson).some((className) => sameCatalogName(className, student.className))))
+    .sort(compareLessonsNewestFirst);
+}
+
+function compareLessonsNewestFirst(left, right) {
+  return (Number(right.teachingWeek) || 0) - (Number(left.teachingWeek) || 0)
+    || String(right.date || '').localeCompare(String(left.date || ''))
+    || String(right.createdAt || '').localeCompare(String(left.createdAt || ''));
 }
 
 function studentsForLesson(store, lesson) {
@@ -356,12 +364,29 @@ function exerciseBlueprintFromFields(fields, teachingWeek) {
 
 function lessonSeriesKey(lesson) {
   if (lesson.sourceScope === 'semester' && lesson.batchId) return `semester:${lesson.batchId}`;
-  return `course:${lesson.courseName || ''}\u0000${lessonClassNames(lesson).filter(Boolean).sort().join('\u241f')}`;
+  const classes = lessonClassNames(lesson).filter(Boolean).map(normalizeCatalogName).sort().join('\u241f');
+  return `course:${normalizeCatalogName(lesson.courseName)}\u0000${classes}`;
 }
 
 function lessonsInSeries(store, lesson) {
   const key = lessonSeriesKey(lesson);
   return store.state.lessons.filter((item) => lessonSeriesKey(item) === key);
+}
+
+function assignNextAvailableWeek(store, lesson) {
+  if (lesson.sourceScope !== 'week') return lesson;
+  const existingLessons = lessonsInSeries(store, lesson);
+  const used = new Set(existingLessons.map((item) => Number(item.teachingWeek)).filter((week) => week > 0));
+  let teachingWeek = Math.max(1, Number(lesson.teachingWeek) || 1);
+  while (used.has(teachingWeek)) teachingWeek += 1;
+  if (teachingWeek === Number(lesson.teachingWeek)) return lesson;
+  const baseTitle = String(lesson.title || '').replace(/\s*[·・]\s*第\s*\d+\s*周\s*$/u, '').trim();
+  lesson.courseName = String(existingLessons.find((item) => item.courseName)?.courseName || lesson.courseName || '').trim();
+  lesson.teachingWeek = teachingWeek;
+  lesson.totalWeeks = Math.max(teachingWeek, Number(lesson.totalWeeks) || 1);
+  lesson.title = `${lesson.courseName || baseTitle || '课程'} · 第 ${teachingWeek} 周`;
+  lesson.weekNumberAutoAssigned = true;
+  return lesson;
 }
 
 function findLessonPrerequisite(store, lesson) {
@@ -745,6 +770,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const lessons = buildLessonRecords({ ...fields, className: classNames[0] || fields.className, filename: file.filename, text });
         for (const lesson of lessons) {
           lesson.classNames = classNames;
+          assignNextAvailableWeek(store, lesson);
           lesson.sourceStoredName = storedName;
           lesson.exerciseOptions = exerciseBlueprintFromFields(fields, lesson.teachingWeek);
           if (store.getSettings().hasApiKey) Object.assign(lesson, { status: 'queued', processingStage: 'queued' });
@@ -757,6 +783,8 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
           ok: true,
           count: lessons.length,
           lessonIds: lessons.map((item) => item.id),
+          teachingWeeks: lessons.map((item) => item.teachingWeek),
+          autoAssignedWeeks: lessons.filter((item) => item.weekNumberAutoAssigned).map((item) => item.teachingWeek),
           processing: hasApiKey,
         });
       }

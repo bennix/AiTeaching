@@ -68,6 +68,21 @@ test('loading existing data repairs previously stored Chinese filename mojibake'
   assert.match(fs.readFileSync(reloaded.dataPath, 'utf8'), new RegExp(expected));
 });
 
+test('loading existing data repairs duplicate single-week imports in the same course and class', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-week-repair-'));
+  fs.writeFileSync(path.join(runtimeDir, 'teaching-data.json'), JSON.stringify({ lessons: [
+    { id: 'first', courseName: 'Python 程序设计', className: '一班', classNames: ['一班'], sourceScope: 'week', teachingWeek: 1, totalWeeks: 1, title: 'Python 程序设计 · 第 1 周', createdAt: '2026-09-01T00:00:00.000Z' },
+    { id: 'second', courseName: 'Python程序设计', className: '一班', classNames: ['一班'], sourceScope: 'week', teachingWeek: 1, totalWeeks: 16, title: 'Python程序设计 · 第 1 周', aiResult: '**课程：**Python程序设计\n**教学周：**第1/16周\n本次计划要求安排为第1/16教学周。', createdAt: '2026-09-07T00:00:00.000Z' },
+  ] }));
+  const store = new JsonStore(runtimeDir);
+  assert.deepEqual(store.state.lessons.map((item) => item.teachingWeek), [1, 2]);
+  assert.equal(store.state.lessons[1].courseName, 'Python 程序设计');
+  assert.equal(store.state.lessons[1].title, 'Python 程序设计 · 第 2 周');
+  assert.equal(store.state.lessons[1].totalWeeks, 16);
+  assert.equal(store.state.lessons[1].aiResult, '**课程：**Python 程序设计\n**教学周：**第2/16周\n本次计划要求安排为第2/16教学周。');
+  assert.ok(store.state.lessons[1].weekNumberRepairedAt);
+});
+
 test('loading existing data removes only an exactly repeated A-D choice block', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-store-choice-repair-'));
   const block = 'A. 甲\nB. 乙\nC. 丙\nD. 丁';

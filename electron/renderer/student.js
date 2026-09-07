@@ -8,6 +8,10 @@ async function api(url, options = {}) { const response = await fetch(url, option
 function toast(message, error = false) { const node = $('#student-toast'); node.textContent = message; node.classList.toggle('error', error); node.hidden = false; clearTimeout(toast.timer); toast.timer = setTimeout(() => { node.hidden = true; }, 3200); }
 
 function selectedLesson() { return studentState.data.lessons.find((item) => item.id === studentState.lessonId) || studentState.data.lessons[0]; }
+function lessonOptionLabel(item) {
+  const title = String(item.courseName || item.title || '课程').replace(/\s*[·・]\s*第\s*\d+\s*周\s*$/u, '').trim();
+  return `第 ${item.teachingWeek} 周 · ${title}`;
+}
 function courseNames(courses = []) { return [...new Set(courses.map((item) => item.courseName).filter(Boolean))].sort((left, right) => left.localeCompare(right, 'zh-CN')); }
 function classesForCourse(courses, courseName) { return courses.filter((item) => item.courseName === courseName).sort((left, right) => left.className.localeCompare(right.className, 'zh-CN')); }
 function renderLoginClasses(courseName) {
@@ -42,7 +46,7 @@ function render() {
     : '<option value="">暂无可用班级</option>';
   classSelect.disabled = !availableClasses.length;
   const select = $('#student-lesson-select');
-  select.innerHTML = data.lessons.map((item) => `<option value="${esc(item.id)}" ${item.id === studentState.lessonId ? 'selected' : ''}>第 ${item.teachingWeek} 周 · ${esc(item.title)}</option>`).join('');
+  select.innerHTML = data.lessons.map((item) => `<option value="${esc(item.id)}" ${item.id === studentState.lessonId ? 'selected' : ''}>${esc(lessonOptionLabel(item))}</option>`).join('');
   const lesson = selectedLesson();
   if (lesson) studentState.lessonId = lesson.id;
   $('#student-lesson-title').textContent = lesson?.title || '暂无教学周';

@@ -2,7 +2,7 @@ const crypto = require('node:crypto');
 const fs = require('node:fs');
 const path = require('node:path');
 const { normalizeUploadFilename, repairUtf8Mojibake } = require('./filenames');
-const { sameCatalogName } = require('./catalog-identity');
+const { normalizeCatalogName, sameCatalogName } = require('./catalog-identity');
 const { repairRepeatedChoiceOptions } = require('./exercise-quality');
 const { lessonClassNames, linkPendingLessons } = require('./teaching-catalog');
 
@@ -38,6 +38,27 @@ const DEFAULT_STATE = {
 
 function clone(value) {
   return JSON.parse(JSON.stringify(value));
+}
+
+function lessonSeriesIdentity(lesson) {
+  const classes = lessonClassNames(lesson).filter(Boolean).map(normalizeCatalogName).sort().join('\u241f');
+  return `${normalizeCatalogName(lesson.courseName)}\u0000${classes}`;
+}
+
+function titleForTeachingWeek(lesson, teachingWeek) {
+  const title = String(lesson.title || '').trim();
+  const baseTitle = title.replace(/\s*[·・]\s*第\s*\d+\s*周\s*$/u, '').trim();
+  return `${String(lesson.courseName || baseTitle || '课程').trim()} · 第 ${teachingWeek} 周`;
+}
+
+function replaceTeachingWeekReferences(value, previousWeek, teachingWeek, totalWeeks) {
+  if (!value || previousWeek === teachingWeek) return value;
+  const escapedWeek = String(previousWeek).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  const escapedTotal = String(totalWeeks).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+  return String(value)
+    .replace(new RegExp(`第\\s*${escapedWeek}\\s*[/／]\\s*${escapedTotal}\\s*教学周`, 'gu'), `第${teachingWeek}/${totalWeeks}教学周`)
+    .replace(new RegExp(`第\\s*${escapedWeek}\\s*[/／]\\s*${escapedTotal}\\s*周`, 'gu'), `第${teachingWeek}/${totalWeeks}周`)
+    .replace(new RegExp(`第\\s*${escapedWeek}\\s*周`, 'gu'), `第${teachingWeek}周`);
 }
 
 function exerciseCoverageForLesson(lesson, exercises) {
@@ -78,7 +99,8 @@ class JsonStore {
     const coursewareDeduplicated = this.#deduplicateGeneratedCourseware();
     const lessonStatesRepaired = this.#repairCompletedLessonStates();
     const exerciseOptionsRepaired = this.#repairRepeatedChoiceOptions();
-    if (filenamesRepaired || coursewareDeduplicated || lessonStatesRepaired || exerciseOptionsRepaired) this.save();
+    const teachingWeeksRepaired = this.#repairDuplicateTeachingWeeks();
+    if (filenamesRepaired || coursewareDeduplicated || lessonStatesRepaired || exerciseOptionsRepaired || teachingWeeksRepaired) this.save();
   }
 
   #loadOrCreateKey() {
@@ -137,6 +159,68 @@ class JsonStore {
     for (const material of [...this.state.materials, ...this.state.classMaterials]) {
       const filename = normalizeUploadFilename(material.filename);
       if (filename !== material.filename) { material.filename = filename; changed = true; }
+    }
+    return changed;
+  }
+
+  #repairDuplicateTeachingWeeks() {
+    let changed = false;
+    const groups = new Map();
+    this.state.lessons.forEach((lesson, index) => {
+      const key = lessonSeriesIdentity(lesson);
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key).push({ lesson, index });
+    });
+    for (const entries of groups.values()) {
+      entries.sort((left, right) => {
+        const leftTime = String(left.lesson.createdAt || left.lesson.date || '');
+        const rightTime = String(right.lesson.createdAt || right.lesson.date || '');
+        return leftTime.localeCompare(rightTime) || left.index - right.index;
+      });
+      const canonicalCourseName = String(entries.find(({ lesson }) => lesson.courseName)?.lesson.courseName || '').trim();
+      const used = new Set();
+      for (const { lesson } of entries) {
+        if (canonicalCourseName && lesson.courseName !== canonicalCourseName) {
+          const previousCourseName = String(lesson.courseName || '');
+          lesson.courseName = canonicalCourseName;
+          lesson.title = titleForTeachingWeek(lesson, Math.max(1, Number(lesson.teachingWeek) || 1));
+          lesson.aiResult = String(lesson.aiResult || '').split(previousCourseName).join(canonicalCourseName);
+          lesson.structuredNotes = String(lesson.structuredNotes || '').split(previousCourseName).join(canonicalCourseName);
+          for (const material of this.state.materials.filter((item) => item.lessonId === lesson.id && item.type === 'ai_generated')) {
+            material.markdown = String(material.markdown || '').split(previousCourseName).join(canonicalCourseName);
+            try {
+              if (material.filePath && fs.existsSync(material.filePath)) {
+                const html = fs.readFileSync(material.filePath, 'utf8');
+                fs.writeFileSync(material.filePath, html.split(previousCourseName).join(canonicalCourseName), 'utf8');
+              }
+            } catch { /* A stale generated file must not block metadata repair. */ }
+          }
+          changed = true;
+        }
+        let week = Math.max(1, Number.parseInt(lesson.teachingWeek, 10) || 1);
+        if (used.has(week) && lesson.sourceScope === 'week') {
+          const previousWeek = week;
+          while (used.has(week)) week += 1;
+          lesson.teachingWeek = week;
+          lesson.totalWeeks = Math.max(week, Number(lesson.totalWeeks) || 1);
+          lesson.title = titleForTeachingWeek(lesson, week);
+          lesson.aiResult = replaceTeachingWeekReferences(lesson.aiResult, previousWeek, week, lesson.totalWeeks);
+          lesson.structuredNotes = replaceTeachingWeekReferences(lesson.structuredNotes, previousWeek, week, lesson.totalWeeks);
+          for (const material of this.state.materials.filter((item) => item.lessonId === lesson.id && item.type === 'ai_generated')) {
+            material.filename = String(material.filename || '').replace(new RegExp(`^第\\s*${previousWeek}\\s*周`, 'u'), `第${week}周`);
+            material.markdown = replaceTeachingWeekReferences(material.markdown, previousWeek, week, lesson.totalWeeks);
+            try {
+              if (material.filePath && fs.existsSync(material.filePath)) {
+                const html = fs.readFileSync(material.filePath, 'utf8');
+                fs.writeFileSync(material.filePath, replaceTeachingWeekReferences(html, previousWeek, week, lesson.totalWeeks), 'utf8');
+              }
+            } catch { /* A stale generated file must not block metadata repair. */ }
+          }
+          lesson.weekNumberRepairedAt = new Date().toISOString();
+          changed = true;
+        }
+        used.add(week);
+      }
     }
     return changed;
   }

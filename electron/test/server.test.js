@@ -84,6 +84,40 @@ test('教师和学生通过同一局域网服务完成导入、签到和选择�
   assert.equal(server.store.state.submissions.length, 0);
 });
 
+test('重复导入单周材料会自动顺延周次且学生端优先返回最新教学周', async (context) => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-import-week-order-'));
+  const rendererDir = path.join(__dirname, '..', 'renderer');
+  const server = await createLanServer({ runtimeDir, rendererDir, preferredPort: 0 });
+  context.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  const login = await json(`${base}/api/auth/admin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'admin' }) });
+  const adminCookie = login.response.headers.get('set-cookie').split(';')[0];
+  server.store.upsertStudent({ studentId: 'W001', name: '周次测试', courseName: 'Python 程序设计', className: '一班' });
+  const importWeek = async (filename, date) => {
+    const form = new FormData();
+    form.set('scope', 'week'); form.set('courseName', 'Python 程序设计'); form.set('className', '一班'); form.set('startDate', date); form.set('weekNumber', '1');
+    form.set('lessonFile', new Blob([`# ${filename}\n教学内容`], { type: 'text/markdown' }), filename);
+    return json(`${base}/api/import`, { method: 'POST', headers: { Cookie: adminCookie }, body: form });
+  };
+  const first = await importWeek('第一周.md', '2026-09-01');
+  const second = await importWeek('第二周.md', '2026-09-08');
+  assert.deepEqual(second.body.autoAssignedWeeks, [2]);
+  const firstLesson = server.store.getLesson(first.body.lessonIds[0]);
+  const secondLesson = server.store.getLesson(second.body.lessonIds[0]);
+  assert.equal(firstLesson.teachingWeek, 1);
+  assert.equal(secondLesson.teachingWeek, 2);
+  assert.equal(secondLesson.title, 'Python 程序设计 · 第 2 周');
+  assert.equal(secondLesson.date, '2026-09-08');
+  server.store.updateLesson(firstLesson.id, { status: 'done', aiResult: '第一周内容' });
+  server.store.updateLesson(secondLesson.id, { status: 'done', aiResult: '第二周内容' });
+  const catalog = await json(`${base}/api/public/courses`);
+  const courseId = catalog.body.courses[0].id;
+  const studentLogin = await json(`${base}/api/auth/student`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: 'W001', className: '一班', courseId }) });
+  const studentCookie = studentLogin.response.headers.get('set-cookie').split(';')[0];
+  const state = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
+  assert.deepEqual(state.body.lessons.map((item) => item.teachingWeek), [2, 1]);
+});
+
 test('学生可以选择已有课程并只读取所选课程的资料与已发放习题', async (context) => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-student-courses-'));
   const rendererDir = path.join(__dirname, '..', 'renderer');

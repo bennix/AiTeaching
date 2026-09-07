@@ -4,6 +4,7 @@ const fs = require('node:fs');
 const path = require('node:path');
 
 const source = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'app.js'), 'utf8');
+const studentSource = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'student.js'), 'utf8');
 
 function handlerSource(selector) {
   const start = source.indexOf(`$('#${selector}').addEventListener('submit'`);
@@ -30,6 +31,12 @@ test('teacher settings shows the ZenMux invite only when no API key is configure
   assert.match(source, /hasApplicableKey \|\| !isZenMuxBaseUrl/);
   assert.match(source, /baseUrl\.addEventListener\('input', updateApiKeyInvite\)/);
   assert.match(source, /apiKey\.addEventListener\('input', updateApiKeyInvite\)/);
+});
+
+test('student teaching-week selector uses a non-redundant label', () => {
+  assert.match(studentSource, /function lessonOptionLabel\(/);
+  assert.match(studentSource, /return `第 \$\{item\.teachingWeek\} 周 · \$\{title\}`/);
+  assert.doesNotMatch(studentSource, />第 \$\{item\.teachingWeek\} 周 · \$\{esc\(item\.title\)\}</);
 });
 
 test('teacher model picker explains and requests application-capable models', () => {

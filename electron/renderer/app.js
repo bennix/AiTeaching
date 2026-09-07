@@ -829,7 +829,8 @@ $('#import-form').addEventListener('submit', async (event) => {
     } else readExerciseBlueprint(form, 'exercise_');
     form.set('lessonFile', $('#lesson-file').files[0]);
     const result = await api('/api/import', { method: 'POST', body: form });
-    toast(`已导入 ${result.count} 个教学周${result.processing ? '，已进入顺序处理队列' : '；配置 API Key 后会自动整理并生成题库'}`);
+    const assigned = result.autoAssignedWeeks?.length ? `；检测到已有周次，已自动顺延为第 ${result.autoAssignedWeeks.join('、')} 周` : '';
+    toast(`已导入 ${result.count} 个教学周${assigned}${result.processing ? '，已进入顺序处理队列' : '；配置 API Key 后会自动整理并生成题库'}`);
     await refresh();
     showView('lessons');
   } catch (error) {
