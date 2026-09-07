@@ -5,6 +5,7 @@ const fs = require('node:fs');
 const http = require('node:http');
 const os = require('node:os');
 const path = require('node:path');
+const nodemailer = require('nodemailer');
 const { createLanServer } = require('../server');
 
 async function json(url, options = {}) {
@@ -283,6 +284,10 @@ test('教师可以查看班级学情图表数据并生成可保存的 AI 报告'
 });
 
 test('学生报告与个性化习题经教师确认发送后才在学生端可见', async (context) => {
+  const sentMail = [];
+  const originalCreateTransport = nodemailer.createTransport;
+  nodemailer.createTransport = () => ({ sendMail: async (message) => { sentMail.push(message); return { accepted: [message.to] }; } });
+  context.after(() => { nodemailer.createTransport = originalCreateTransport; });
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-student-send-'));
   const rendererDir = path.join(__dirname, '..', 'renderer');
   const server = await createLanServer({ runtimeDir, rendererDir, preferredPort: 0 });
@@ -290,6 +295,7 @@ test('学生报告与个性化习题经教师确认发送后才在学生端可�
   const base = `http://127.0.0.1:${server.port}`;
   server.store.addLessons([{ id: 'send-week', title: '程序设计第 1 周', courseName: '程序设计', className: '一班', classNames: ['一班'], teachingWeek: 1, status: 'done', aiResult: '教学内容' }]);
   server.store.upsertStudent({ studentId: 'SEND001', name: '发送测试', courseName: '程序设计', className: '一班' });
+  server.store.updateMailSettings({ host: 'smtp.example.test', port: 465, security: 'ssl', senderEmail: 'teacher@example.test', senderName: '教师', studentEmailSuffix: '@m.fudan.edu.cn', password: 'test-secret' });
   server.store.addExercises([
     { id: 'personal-draft', lessonId: 'send-week', targetStudentId: 'SEND001', generationBatchId: 'batch-new', generationCreatedAt: '2026-09-07T02:00:00.000Z', published: false, type: 'choice', question: '1 + 1 = ?', answer: '2' },
     { id: 'personal-draft-2', lessonId: 'send-week', targetStudentId: 'SEND001', generationBatchId: 'batch-new', generationCreatedAt: '2026-09-07T02:00:00.000Z', published: false, type: 'choice', question: '2 + 2 = ?', answer: '4' },
@@ -323,6 +329,14 @@ test('学生报告与个性化习题经教师确认发送后才在学生端可�
     method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId: 'report-old' }),
   });
   assert.equal(sentReport.body.report.published, true);
+  const emailedReport = await json(`${base}/api/students/SEND001/email-report`, {
+    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ reportId: 'report-old' }),
+  });
+  assert.equal(emailedReport.body.report.emailedTo, 'SEND001@m.fudan.edu.cn');
+  assert.ok(emailedReport.body.report.emailedAt);
+  assert.equal(sentMail[0].to, 'SEND001@m.fudan.edu.cn');
+  const stateAfterEmail = await json(`${base}/api/state`, { headers: { Cookie: adminCookie } });
+  assert.equal(stateAfterEmail.body.students.find((item) => item.studentId === 'SEND001').emailedReportCount, 1);
   const sentExercises = await json(`${base}/api/students/SEND001/publish-exercises`, {
     method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseIds: ['personal-draft', 'personal-draft-2'] }),
   });

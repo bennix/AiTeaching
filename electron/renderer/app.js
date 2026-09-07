@@ -247,12 +247,13 @@ function showStudentReport(student, reports, selectedId = '') {
   const isPublished = report.published !== false;
   state.activeStudentReport = { studentId: student.studentId, student, report, reports };
   $('#report-title').textContent = `${student.name || student.studentId} · 学习诊断`;
-  $('#report-history-select').innerHTML = reports.map((item, index) => `<option value="${escapeHtml(item.id)}" ${item.id === report.id ? 'selected' : ''}>${reportTime(item.createdAt)}${index === 0 ? ' · 最新' : ''}${item.published !== false ? ' · 已发送' : ' · 草稿'}</option>`).join('');
-  $('#report-status').textContent = isPublished ? '✓ 已生成 · 已发送' : '✓ 已生成 · 未发送';
-  $('#report-status').classList.toggle('success', isPublished);
+  $('#report-history-select').innerHTML = reports.map((item, index) => `<option value="${escapeHtml(item.id)}" ${item.id === report.id ? 'selected' : ''}>${reportTime(item.createdAt)}${index === 0 ? ' · 最新' : ''}${item.published !== false ? ' · 已发送学生端' : ' · 草稿'}${item.emailedAt ? ' · 邮件已发送' : ''}</option>`).join('');
+  $('#report-status').textContent = `${isPublished ? '✓ 已发送学生端' : '✓ 已生成 · 未发送学生端'}${report.emailedAt ? ` · ✉ 邮件已发送 ${reportTime(report.emailedAt)}` : ' · 邮件未发送'}`;
+  $('#report-status').classList.toggle('success', isPublished || Boolean(report.emailedAt));
   $('#report-send-button').textContent = isPublished ? '已发送给学生' : '发送给学生';
   $('#report-send-button').disabled = isPublished;
   $('#report-email-button').disabled = !student.email;
+  $('#report-email-button').textContent = report.emailedAt ? '再次发送到学生邮箱' : '发送到学生邮箱';
   RichText.render($('#report-content'), report.markdown, '暂无报告内容。');
   if (!$('#report-dialog').open) $('#report-dialog').showModal();
 }
@@ -297,7 +298,7 @@ function renderStudents() {
   $('#delete-selected-course').disabled = !selectedGroup?.courseName;
   $('#student-list').innerHTML = selectedGroup ? selectedGroup.students.map((student) => `
     <article class="student-card">
-      <div><h3>${escapeHtml(student.name)} <span class="badge">${escapeHtml(student.studentId)}</span></h3><p>${escapeHtml(student.courseName || '未指定课程')} · ${escapeHtml(student.className || '未分班')} · ${escapeHtml(student.email || '未填写邮箱')}</p>${student.reportCount ? `<span class="report-generated-mark">✓ AI 报告已生成 ${student.reportCount} 份</span>` : ''}${student.exerciseBatchCount ? `<span class="report-generated-mark">✓ 个性化习题已生成 ${student.exerciseBatchCount} 批</span>` : ''}</div>
+      <div><h3>${escapeHtml(student.name)} <span class="badge">${escapeHtml(student.studentId)}</span></h3><p>${escapeHtml(student.courseName || '未指定课程')} · ${escapeHtml(student.className || '未分班')} · ${escapeHtml(student.email || '未填写邮箱')}</p>${student.reportCount ? `<span class="report-generated-mark">✓ AI 报告已生成 ${student.reportCount} 份</span>` : ''}${student.emailedReportCount ? `<span class="report-generated-mark">✉ 邮件已发送 ${student.emailedReportCount} 份</span>` : ''}${student.exerciseBatchCount ? `<span class="report-generated-mark">✓ 个性化习题已生成 ${student.exerciseBatchCount} 批</span>` : ''}</div>
       <div class="student-card-actions"><button class="button secondary" data-report-student="${escapeHtml(student.studentId)}">生成 AI 报告</button>${student.reportCount ? `<button class="button secondary" data-view-reports="${escapeHtml(student.studentId)}">查看报告 (${student.reportCount})</button>` : ''}<button class="button secondary" data-target-student="${escapeHtml(student.studentId)}">生成个性化习题</button>${student.exerciseBatchCount ? `<button class="button secondary" data-view-exercise-batches="${escapeHtml(student.studentId)}">查看习题 (${student.exerciseBatchCount})</button>` : ''}<button class="button secondary" data-email-student="${escapeHtml(student.studentId)}" ${student.reportCount ? '' : 'disabled'}>发送报告</button><button class="button danger" data-delete-student="${escapeHtml(student.studentId)}">删除</button></div>
     </article>`).join('') : '<div class="empty">还没有学生，请手动添加或导入名册。</div>';
   $$('[data-student-class-key]').forEach((button) => button.addEventListener('click', () => {
@@ -345,7 +346,7 @@ function renderStudents() {
       showPersonalizedExerciseBatch(student, history.batches);
     } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
   }));
-  $$('[data-email-student]').forEach((button) => button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/students/${encodeURIComponent(button.dataset.emailStudent)}/email-report`, { method: 'POST' }); toast('学生报告邮件已发送'); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } }));
+  $$('[data-email-student]').forEach((button) => button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/students/${encodeURIComponent(button.dataset.emailStudent)}/email-report`, { method: 'POST' }); toast('学生报告邮件已发送并记录'); await refresh(); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } }));
   $('#class-material-list').innerHTML = (state.data.classMaterials || []).map((item) => `<div class="student-card"><div><h3>${escapeHtml(item.filename)}</h3><p>${escapeHtml(item.courseName || '')} · ${escapeHtml(item.className || '')}</p></div><button class="button danger" data-delete-class-material="${escapeHtml(item.id)}">删除</button></div>`).join('');
   $$('[data-delete-class-material]').forEach((button) => button.addEventListener('click', async () => { try { await api(`/api/materials/${button.dataset.deleteClassMaterial}`, { method: 'DELETE' }); await refresh(); } catch (error) { toast(error.message, true); } }));
 }
@@ -989,11 +990,14 @@ $('#report-email-button').addEventListener('click', async (event) => {
   const button = event.currentTarget;
   button.disabled = true;
   try {
-    await api(`/api/students/${encodeURIComponent(state.activeStudentReport.studentId)}/email-report`, {
+    const result = await api(`/api/students/${encodeURIComponent(state.activeStudentReport.studentId)}/email-report`, {
       method: 'POST', headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({ reportId: state.activeStudentReport.report.id }),
     });
-    toast('学生报告邮件已发送');
+    Object.assign(state.activeStudentReport.report, result.report);
+    showStudentReport(state.activeStudentReport.student, state.activeStudentReport.reports, result.report.id);
+    await refresh();
+    toast('学生报告邮件已发送并记录');
   }
   catch (error) { toast(error.message, true); }
   finally { button.disabled = false; }

@@ -617,6 +617,8 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
               reportCount: reports.length,
               latestReportAt: reports[0]?.createdAt || '',
               hasPublishedReport: reports.some((report) => report.published !== false),
+              emailedReportCount: reports.filter((report) => report.emailedAt).length,
+              latestReportEmailedAt: reports[0]?.emailedAt || '',
               exerciseBatchCount: exerciseBatchIds.size,
               latestExerciseAt: personalized.sort((left, right) => String(right.generationCreatedAt || right.createdAt || '').localeCompare(String(left.generationCreatedAt || left.createdAt || '')))[0]?.generationCreatedAt || personalized[0]?.createdAt || '',
               hasPublishedPersonalizedExercises: personalized.some((exercise) => exercise.published === true),
@@ -979,8 +981,12 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const report = body.reportId ? reports.find((item) => item.id === body.reportId) : reports[0];
         if (!student) throw new Error('未找到学生');
         if (!report?.markdown) throw new Error('请先生成学生学习诊断报告');
-        await sendConfiguredMail(store, { to: studentEmailAddress(store, student), subject: `${student.courseName || '课程'} 学习诊断 - ${student.name}`, text: report.markdown });
-        return sendJson(response, 200, { ok: true });
+        const recipient = studentEmailAddress(store, student);
+        await sendConfiguredMail(store, { to: recipient, subject: `${student.courseName || '课程'} 学习诊断 - ${student.name}`, text: report.markdown });
+        report.emailedAt = new Date().toISOString();
+        report.emailedTo = recipient;
+        store.save();
+        return sendJson(response, 200, { ok: true, report });
       }
       const materialPreviewMatch = pathname.match(/^\/api\/materials\/([^/]+)\/preview$/);
       if (request.method === 'GET' && materialPreviewMatch) {

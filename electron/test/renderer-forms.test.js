@@ -147,6 +147,7 @@ test('student tools stay compact and student report and exercise previews can be
   assert.match(source, /data-view-reports/);
   assert.match(source, /data-view-exercise-batches/);
   assert.match(source, /AI 报告已生成/);
+  assert.match(source, /邮件已发送/);
   assert.match(source, /个性化习题已生成/);
   assert.match(source, /\/publish-report/);
   assert.match(source, /\/publish-exercises/);
