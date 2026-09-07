@@ -5,8 +5,8 @@ const { buildLearningAnalytics } = require('../lib/analytics');
 test('builds course and week scoped attendance, exercise and mastery analytics', () => {
   const state = {
     lessons: [
-      { id: 'w1', courseName: '高一数学', className: '教学班', teachingWeek: 1, title: '第 1 周', status: 'done' },
-      { id: 'w2', courseName: '高一数学', className: '教学班', teachingWeek: 2, title: '第 2 周', status: 'done' },
+      { id: 'w1', courseName: '高一数学', className: '高一（2）班', teachingWeek: 1, title: '第 1 周', status: 'done' },
+      { id: 'w2', courseName: '高一数学', className: '高一（2）班', teachingWeek: 2, title: '第 2 周', status: 'done' },
       { id: 'english', courseName: '高一英语', className: '教学班', teachingWeek: 1, title: 'English', status: 'done' },
     ],
     students: [
@@ -56,7 +56,7 @@ test('builds course and week scoped attendance, exercise and mastery analytics',
 
 test('scopes analytics to one teaching week without treating unanswered work as incorrect', () => {
   const state = {
-    lessons: [{ id: 'w1', courseName: '数学', teachingWeek: 1, status: 'done' }],
+    lessons: [{ id: 'w1', courseName: '数学', className: '一班', teachingWeek: 1, status: 'done' }],
     students: [{ studentId: 'S1', name: '甲', courseName: '数学', className: '一班' }],
     exercises: [{ id: 'q1', lessonId: 'w1', published: true, targetStudentId: null, knowledgePoint: '集合' }],
     submissions: [], attendance: [], classReports: [],
@@ -67,4 +67,34 @@ test('scopes analytics to one teaching week without treating unanswered work as 
   assert.equal(analytics.summary.completionRate, 0);
   assert.equal(analytics.summary.accuracyRate, 0);
   assert.deepEqual(analytics.knowledgePoints, []);
+});
+
+test('normalizes roster and lesson names and counts only each class assignments during regeneration', () => {
+  const state = {
+    students: [
+      { studentId: 's1', courseName: 'Python程序设计', className: '一班（1）' },
+      { studentId: 's2', courseName: 'Python程序设计', className: '二班' },
+    ],
+    lessons: [
+      { id: 'l1', courseName: 'Python 程序设计', classNames: ['一班(1)'], status: 'processing', aiResult: '已整理方案' },
+      { id: 'l2', courseName: 'Python 程序设计', classNames: ['二班'], status: 'done' },
+      { id: 'detached', courseName: 'Python程序设计', classNames: [], status: 'done' },
+    ],
+    exercises: [{ id: 'q1', lessonId: 'l1', published: true }, { id: 'q2', lessonId: 'l2', published: true }],
+    attendance: [], submissions: [],
+  };
+  const filters = { courseName: 'Python 程序设计', className: '一班(1)' };
+  const initial = buildLearningAnalytics(state, filters);
+  assert.equal(initial.filters.courses.length, 1);
+  assert.equal(initial.summary.lessonCount, 1);
+  assert.equal(initial.summary.assignmentCount, 1);
+  state.attendance.push({ lessonId: 'l1', studentId: 's1', status: 'present' });
+  state.submissions.push({ exerciseId: 'q1', studentId: 's1', correct: true });
+  const updated = buildLearningAnalytics(state, filters);
+  assert.equal(updated.summary.attendanceRate, 100);
+  assert.equal(updated.summary.completionRate, 100);
+  assert.equal(updated.summary.accuracyRate, 100);
+  const all = buildLearningAnalytics(state, { courseName: 'Python程序设计' });
+  assert.equal(all.summary.attendanceExpected, 2);
+  assert.equal(all.summary.assignmentCount, 2);
 });

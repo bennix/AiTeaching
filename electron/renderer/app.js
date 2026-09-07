@@ -366,18 +366,47 @@ function renderAnalytics() {
   RichText.render($('#analytics-report-content'), latestReport?.markdown || '', '点击“AI 生成学情报告”，获取薄弱知识点、重点关注学生与下一阶段教学建议。');
 }
 
+let analyticsRequestVersion = 0;
 async function loadAnalytics(overrides = {}) {
+  const version = ++analyticsRequestVersion;
   state.analyticsFilters = { ...state.analyticsFilters, ...overrides };
   const query = new URLSearchParams();
   for (const key of ['courseName', 'className', 'lessonId']) if (state.analyticsFilters[key]) query.set(key, state.analyticsFilters[key]);
-  state.analytics = await api(`/api/analytics${query.size ? `?${query}` : ''}`);
+  const analytics = await api(`/api/analytics${query.size ? `?${query}` : ''}`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+  if (version !== analyticsRequestVersion) return;
+  state.analytics = analytics;
   state.analyticsFilters = {
     courseName: state.analytics.filters.courseName,
     className: state.analytics.filters.className,
     lessonId: state.analytics.filters.lessonId,
   };
   renderAnalytics();
+  $('#analytics-live-status').textContent = `自动更新中 · 最近更新 ${new Date().toLocaleTimeString()}`;
 }
+
+let liveRefreshBusy = false;
+async function refreshLearningViews() {
+  if (liveRefreshBusy || document.hidden || !state.data) return;
+  liveRefreshBusy = true;
+  try {
+    if ($('.nav-item.active')?.dataset.view === 'analytics') await loadAnalytics();
+    const lessonId = state.activeLesson?.id;
+    if (lessonId && $('#lesson-dialog').open && state.activeTab === 'attendance') {
+      const lesson = await api(`/api/lessons/${encodeURIComponent(lessonId)}`, { cache: 'no-store', signal: AbortSignal.timeout(10000) });
+      if (state.activeLesson?.id === lessonId && $('#lesson-dialog').open && state.activeTab === 'attendance') {
+        state.activeLesson = lesson;
+        renderDialogContent();
+      }
+    }
+  } catch {
+    $('#analytics-live-status').textContent = '连接暂时中断，正在自动重试';
+  } finally {
+    liveRefreshBusy = false;
+  }
+}
+setInterval(refreshLearningViews, 3000);
+window.addEventListener('focus', refreshLearningViews);
+document.addEventListener('visibilitychange', refreshLearningViews);
 
 function renderNetwork() {
   const urls = state.data.lanUrls || [];
