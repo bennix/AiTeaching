@@ -27,6 +27,16 @@ test('changing the AI provider never reuses the previous provider API key', () =
   assert.equal(store.getSettings({ includeKey: true }).apiKey, '');
 });
 
+test('student email suffix defaults to Fudan mobile mail and stays configurable', () => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-email-suffix-'));
+  const store = new JsonStore(runtimeDir);
+  assert.equal(store.getMailSettings().studentEmailSuffix, '@m.fudan.edu.cn');
+  store.updateMailSettings({ studentEmailSuffix: '@example.edu.cn' });
+  assert.equal(store.getSettings().mail.studentEmailSuffix, '@example.edu.cn');
+  store.updateMailSettings({ studentEmailSuffix: '' });
+  assert.equal(store.getMailSettings().studentEmailSuffix, '@m.fudan.edu.cn');
+});
+
 test('exercise review model is stored separately and must differ from the primary model', () => {
   const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-review-model-'));
   const store = new JsonStore(runtimeDir);

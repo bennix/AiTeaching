@@ -119,8 +119,9 @@ function standaloneKatexCss(rendererDir) {
   });
 }
 
-function buildStandaloneCoursewareHtml({ rendererDir, title, markdown }) {
+function buildStandaloneCoursewareHtml({ rendererDir, title, markdown, emptyText = '暂无课件内容' }) {
   const embeddedMarkdown = JSON.stringify(markdown).replace(/</g, '\\u003c');
+  const embeddedEmptyText = JSON.stringify(emptyText).replace(/</g, '\\u003c');
   const styles = `${standaloneKatexCss(rendererDir)}\n${fs.readFileSync(path.join(rendererDir, 'rich-text.css'), 'utf8')}\nbody{font:17px/1.8 system-ui;max-width:1100px;margin:auto;padding:4vw;color:#172033;background:#f5f7fb}main{background:white;padding:clamp(24px,5vw,64px);border-radius:24px;box-shadow:0 18px 60px #17203312}`.replace(/<\/style/gi, '<\\/style');
   const scripts = [
     path.join(rendererDir, 'vendor', 'marked.umd.js'),
@@ -129,7 +130,7 @@ function buildStandaloneCoursewareHtml({ rendererDir, title, markdown }) {
     path.join(rendererDir, 'vendor', 'katex', 'auto-render.min.js'),
     path.join(rendererDir, 'markdown.js'),
   ].map((filePath) => `<script>${inlineBrowserScript(filePath)}</script>`).join('');
-  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; img-src data:"><title>${htmlEscape(title)}</title><style>${styles}</style></head><body><main id="courseware" class="markdown-body"></main>${scripts}<script>RichText.render(document.getElementById('courseware'),${embeddedMarkdown},'暂无课件内容');</script></body></html>`;
+  return `<!doctype html><html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width"><meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'unsafe-inline'; style-src 'unsafe-inline'; font-src data:; img-src data:"><title>${htmlEscape(title)}</title><style>${styles}</style></head><body><main id="courseware" class="markdown-body"></main>${scripts}<script>RichText.render(document.getElementById('courseware'),${embeddedMarkdown},${embeddedEmptyText});</script></body></html>`;
 }
 
 function materialPreviewMarkdown(store, material) {
@@ -259,6 +260,16 @@ async function sendConfiguredMail(store, { to, subject, text }) {
     ...(mail.security === 'starttls' ? { requireTLS: true } : {}),
   });
   return transporter.sendMail({ from: `"${mail.senderName}" <${mail.senderEmail}>`, to, subject, text });
+}
+
+function studentEmailAddress(store, student) {
+  const explicit = String(student?.email || '').trim();
+  if (explicit) return explicit;
+  const studentId = String(student?.studentId || '').trim();
+  if (!studentId) return '';
+  const configured = String(store.getMailSettings().studentEmailSuffix || '@m.fudan.edu.cn').trim();
+  const suffix = configured.startsWith('@') ? configured : `@${configured}`;
+  return `${studentId}${suffix}`;
 }
 
 function readJson(request, limit = 1024 * 1024) {
@@ -594,7 +605,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         return sendJson(response, 200, {
           settings: store.getSettings(),
           lessons: store.listLessons(),
-          students: store.state.students,
+          students: store.state.students.map((student) => ({ ...student, email: studentEmailAddress(store, student) })),
           exerciseCount: store.state.exercises.length,
           submissionCount: store.state.submissions.length,
           attendanceCount: store.state.attendance.length,
@@ -631,6 +642,23 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (existing) Object.assign(existing, report); else store.state.classReports.push(report);
         store.save();
         return sendJson(response, 200, { ok: true, report });
+      }
+      const analyticsReportDownloadMatch = pathname.match(/^\/api\/analytics\/report\/([^/]+)\/download$/);
+      if (request.method === 'GET' && analyticsReportDownloadMatch) {
+        const report = store.state.classReports.find((item) => item.id === decodeURIComponent(analyticsReportDownloadMatch[1]));
+        if (!report?.markdown) return sendJson(response, 404, { error: '未找到可下载的学情报告' });
+        const scopeName = [report.courseName, report.className].filter(Boolean).join('_') || '全部课程';
+        const filename = `${scopeName}_学情报告`.replace(/[^\p{L}\p{N}_-]+/gu, '_').replace(/^_+|_+$/g, '') + '.html';
+        const html = buildStandaloneCoursewareHtml({
+          rendererDir, title: `${scopeName} 学情报告`, markdown: report.markdown, emptyText: '暂无学情报告内容',
+        });
+        response.writeHead(200, {
+          'Content-Type': 'text/html; charset=utf-8',
+          'Content-Disposition': `attachment; filename*=UTF-8''${encodeURIComponent(filename)}`,
+          'Cache-Control': 'no-store',
+        });
+        response.end(html);
+        return;
       }
       if (request.method === 'GET' && pathname.startsWith('/api/lessons/')) {
         const id = pathname.slice('/api/lessons/'.length);
@@ -846,7 +874,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         const records = store.state.submissions.filter((item) => item.studentId === studentId).map((submission) => ({ ...submission, exercise: store.state.exercises.find((item) => item.id === submission.exerciseId) }));
         const markdown = await generateStudentReport(store.getSettings({ includeKey: true }), student, records);
         const existing = store.state.studentReports.find((item) => item.studentId === studentId);
-        const report = { id: existing?.id || crypto.randomUUID(), studentId, markdown, createdAt: new Date().toISOString() };
+        const report = { id: existing?.id || crypto.randomUUID(), studentId, markdown, published: false, publishedAt: null, createdAt: new Date().toISOString() };
         if (existing) Object.assign(existing, report); else store.state.studentReports.push(report);
         store.save();
         return sendJson(response, 200, { ok: true, report });
@@ -865,18 +893,39 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
           weakPoints,
           excludeQuestions: store.state.exercises.filter((item) => item.lessonId === lesson.id).map((item) => item.question),
         });
-        const records = exerciseRecords(generated, lesson.id, { targetStudentId: studentId, published: true });
+        const records = exerciseRecords(generated, lesson.id, { targetStudentId: studentId, published: false });
         store.addExercises(records);
-        return sendJson(response, 201, { ok: true, count: records.length });
+        return sendJson(response, 201, { ok: true, count: records.length, exercises: records });
+      }
+      const publishReportMatch = pathname.match(/^\/api\/students\/([^/]+)\/publish-report$/);
+      if (request.method === 'POST' && publishReportMatch) {
+        const studentId = decodeURIComponent(publishReportMatch[1]);
+        const report = store.state.studentReports.find((item) => item.studentId === studentId);
+        if (!report?.markdown) return sendJson(response, 404, { error: '请先生成学生学习诊断报告' });
+        report.published = true;
+        report.publishedAt = new Date().toISOString();
+        store.save();
+        return sendJson(response, 200, { ok: true, report });
+      }
+      const publishPersonalizedMatch = pathname.match(/^\/api\/students\/([^/]+)\/publish-exercises$/);
+      if (request.method === 'POST' && publishPersonalizedMatch) {
+        const studentId = decodeURIComponent(publishPersonalizedMatch[1]);
+        const body = await readJson(request);
+        const requestedIds = new Set(Array.isArray(body.exerciseIds) ? body.exerciseIds : []);
+        const exercises = store.state.exercises.filter((item) => item.targetStudentId === studentId && requestedIds.has(item.id));
+        if (!exercises.length) return sendJson(response, 404, { error: '未找到可发送的个性化习题' });
+        for (const exercise of exercises) exercise.published = true;
+        store.save();
+        return sendJson(response, 200, { ok: true, count: exercises.length });
       }
       const reportEmailMatch = pathname.match(/^\/api\/students\/([^/]+)\/email-report$/);
       if (request.method === 'POST' && reportEmailMatch) {
         const studentId = decodeURIComponent(reportEmailMatch[1]);
         const student = store.state.students.find((item) => item.studentId === studentId);
         const report = store.state.studentReports.find((item) => item.studentId === studentId);
-        if (!student?.email) throw new Error('该学生没有邮箱地址');
+        if (!student) throw new Error('未找到学生');
         if (!report?.markdown) throw new Error('请先生成学生学习诊断报告');
-        await sendConfiguredMail(store, { to: student.email, subject: `${student.courseName || '课程'} 学习诊断 - ${student.name}`, text: report.markdown });
+        await sendConfiguredMail(store, { to: studentEmailAddress(store, student), subject: `${student.courseName || '课程'} 学习诊断 - ${student.name}`, text: report.markdown });
         return sendJson(response, 200, { ok: true });
       }
       const materialPreviewMatch = pathname.match(/^\/api\/materials\/([^/]+)\/preview$/);
@@ -921,7 +970,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (!lesson) return sendJson(response, 404, { error: '未找到课次' });
         const body = await readJson(request);
         const mail = store.getMailSettings();
-        const recipients = body.test ? [mail.testRecipient] : studentsForLesson(store, lesson).map((item) => item.email).filter(Boolean);
+        const recipients = body.test ? [mail.testRecipient] : studentsForLesson(store, lesson).map((item) => studentEmailAddress(store, item)).filter(Boolean);
         if (!recipients.length) throw new Error(body.test ? '请先配置测试收件邮箱' : '班级中没有可用的学生邮箱');
         const exercises = lesson.exercises.filter((item) => item.published && !item.targetStudentId).map((item, index) => `\n练习 ${index + 1}\n${item.question}`).join('\n');
         await sendConfiguredMail(store, { to: recipients.join(','), subject: `${lesson.courseName || '课程'} 第${lesson.teachingWeek}周资料`, text: `${lesson.aiResult || lesson.rawText}\n\n${exercises}` });
@@ -1005,7 +1054,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         return sendJson(response, 200, {
           student, availableCourses, selectedCourseId: course?.id || '', lessons, exercises, submissions,
           attendance: store.state.attendance.filter((item) => item.studentId === student.studentId && lessonIds.has(item.lessonId)),
-          materials, classMaterials, report: store.state.studentReports.find((item) => item.studentId === student.studentId) || null,
+          materials, classMaterials, report: store.state.studentReports.find((item) => item.studentId === student.studentId && item.published !== false) || null,
         });
       }
       if (request.method === 'POST' && pathname === '/api/student/attendance') {

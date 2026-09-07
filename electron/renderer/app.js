@@ -1,4 +1,4 @@
-const state = { data: null, analytics: null, analyticsFilters: {}, activeLesson: null, activeTab: 'ai', activeLessonGroupKey: '', activeStudentClassKey: '', poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
+const state = { data: null, analytics: null, analyticsFilters: {}, activeLesson: null, activeTab: 'ai', activeLessonGroupKey: '', activeStudentClassKey: '', activeStudentReport: null, personalizedExerciseDraft: null, poller: null, lessonStream: null, batchMode: false, selectedLessonIds: new Set() };
 const viewMeta = {
   lessons: ['教案与教学周', '管理单周教案与整学期教学安排'],
   import: ['导入教案', '支持 PDF、Word 和 Markdown 教案'],
@@ -276,12 +276,29 @@ function renderStudents() {
       const result = await api(`/api/students/${encodeURIComponent(button.dataset.reportStudent)}/report`, { method: 'POST' });
       const student = students.find((item) => item.studentId === button.dataset.reportStudent);
       $('#report-title').textContent = `${student?.name || button.dataset.reportStudent} · 学习诊断`;
+      state.activeStudentReport = { studentId: button.dataset.reportStudent, student, report: result.report };
+      $('#report-send-button').textContent = result.report.published ? '已发送给学生' : '发送给学生';
+      $('#report-send-button').disabled = Boolean(result.report.published);
+      $('#report-email-button').disabled = !student?.email;
       RichText.render($('#report-content'), result.report.markdown, '暂无报告内容。');
       $('#report-dialog').showModal();
     }
     catch (error) { toast(error.message, true); } finally { button.disabled = false; }
   }));
-  $$('[data-target-student]').forEach((button) => button.addEventListener('click', async () => { button.disabled = true; try { const result = await api(`/api/students/${encodeURIComponent(button.dataset.targetStudent)}/exercises`, { method: 'POST' }); toast(`已生成并发放 ${result.count} 道个性化习题`); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } }));
+  $$('[data-target-student]').forEach((button) => button.addEventListener('click', async () => {
+    button.disabled = true;
+    try {
+      const student = students.find((item) => item.studentId === button.dataset.targetStudent);
+      const result = await api(`/api/students/${encodeURIComponent(button.dataset.targetStudent)}/exercises`, { method: 'POST' });
+      state.personalizedExerciseDraft = { studentId: button.dataset.targetStudent, student, exercises: result.exercises || [] };
+      $('#personalized-exercise-title').textContent = `${student?.name || button.dataset.targetStudent} · 个性化习题`;
+      const markdown = state.personalizedExerciseDraft.exercises.map((exercise, index) => `## ${index + 1}. ${exerciseTypeLabel(exercise.type)}\n\n${exercise.question}\n\n**参考答案：** ${exercise.answer}\n\n**解析：** ${exercise.explanation || '暂无解析'}`).join('\n\n---\n\n');
+      RichText.render($('#personalized-exercise-content'), markdown, 'AI 没有返回可用题目。');
+      $('#personalized-exercise-send').disabled = !state.personalizedExerciseDraft.exercises.length;
+      $('#personalized-exercise-send').textContent = '发送给学生';
+      $('#personalized-exercise-dialog').showModal();
+    } catch (error) { toast(error.message, true); } finally { button.disabled = false; }
+  }));
   $$('[data-email-student]').forEach((button) => button.addEventListener('click', async () => { button.disabled = true; try { await api(`/api/students/${encodeURIComponent(button.dataset.emailStudent)}/email-report`, { method: 'POST' }); toast('学生报告邮件已发送'); } catch (error) { toast(error.message, true); } finally { button.disabled = false; } }));
   $('#class-material-list').innerHTML = (state.data.classMaterials || []).map((item) => `<div class="student-card"><div><h3>${escapeHtml(item.filename)}</h3><p>${escapeHtml(item.courseName || '')} · ${escapeHtml(item.className || '')}</p></div><button class="button danger" data-delete-class-material="${escapeHtml(item.id)}">删除</button></div>`).join('');
   $$('[data-delete-class-material]').forEach((button) => button.addEventListener('click', async () => { try { await api(`/api/materials/${button.dataset.deleteClassMaterial}`, { method: 'DELETE' }); await refresh(); } catch (error) { toast(error.message, true); } }));
@@ -363,6 +380,12 @@ function renderAnalytics() {
   $('#analytics-report-meta').textContent = latestReport?.createdAt
     ? `生成于 ${new Date(latestReport.createdAt).toLocaleString()} · 基于当前范围保存`
     : '尚未生成报告；AI 会严格依据上方真实统计给出分析与建议';
+  const downloadButton = $('#analytics-download-button');
+  const hasReport = Boolean(latestReport?.id && latestReport?.markdown);
+  downloadButton.href = hasReport ? `/api/analytics/report/${encodeURIComponent(latestReport.id)}/download` : '#';
+  downloadButton.classList.toggle('disabled', !hasReport);
+  downloadButton.setAttribute('aria-disabled', String(!hasReport));
+  downloadButton.tabIndex = hasReport ? 0 : -1;
   RichText.render($('#analytics-report-content'), latestReport?.markdown || '', '点击“AI 生成学情报告”，获取薄弱知识点、重点关注学生与下一阶段教学建议。');
 }
 
@@ -884,6 +907,38 @@ $('#settings-form').exerciseReviewModel.addEventListener('input', (event) => syn
 
 $('#dialog-close').addEventListener('click', () => { closeLessonStream(); $('#lesson-dialog').close(); });
 $('#report-close').addEventListener('click', () => $('#report-dialog').close());
+$('#report-send-button').addEventListener('click', async (event) => {
+  if (!state.activeStudentReport) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    await api(`/api/students/${encodeURIComponent(state.activeStudentReport.studentId)}/publish-report`, { method: 'POST' });
+    button.textContent = '已发送给学生';
+    toast('学习诊断已发送到学生学习中心');
+  } catch (error) { button.disabled = false; toast(error.message, true); }
+});
+$('#report-email-button').addEventListener('click', async (event) => {
+  if (!state.activeStudentReport) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try { await api(`/api/students/${encodeURIComponent(state.activeStudentReport.studentId)}/email-report`, { method: 'POST' }); toast('学生报告邮件已发送'); }
+  catch (error) { toast(error.message, true); }
+  finally { button.disabled = false; }
+});
+$('#personalized-exercise-close').addEventListener('click', () => $('#personalized-exercise-dialog').close());
+$('#personalized-exercise-send').addEventListener('click', async (event) => {
+  if (!state.personalizedExerciseDraft?.exercises?.length) return;
+  const button = event.currentTarget;
+  button.disabled = true;
+  try {
+    const result = await api(`/api/students/${encodeURIComponent(state.personalizedExerciseDraft.studentId)}/publish-exercises`, {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ exerciseIds: state.personalizedExerciseDraft.exercises.map((item) => item.id) }),
+    });
+    button.textContent = '已发送给学生';
+    toast(`已发送 ${result.count} 道个性化习题`);
+  } catch (error) { button.disabled = false; toast(error.message, true); }
+});
 $('#courseware-preview-close').addEventListener('click', () => $('#courseware-preview-dialog').close());
 $$('.tab').forEach((tab) => tab.addEventListener('click', () => {
   state.activeTab = tab.dataset.tab;

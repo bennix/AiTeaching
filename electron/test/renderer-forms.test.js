@@ -51,6 +51,12 @@ test('teacher model picker explains and requests application-capable models', ()
   assert.match(source, /已排除.*不适合教学工作流/);
 });
 
+test('mail settings expose the configurable default student email suffix', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  assert.match(html, /name="studentEmailSuffix" value="@m\.fudan\.edu\.cn"/);
+  assert.match(html, /学生未填写邮箱时，自动使用“学号 \+ 此后缀”/);
+});
+
 test('STEM exercise workflow exposes independent review progress and verification evidence', () => {
   assert.match(source, /progress\?\.phase === 'reviewing'/);
   assert.match(source, /只有复核通过的题目会自动出现在这里/);
@@ -107,11 +113,12 @@ test('student page selects an existing course and shows all course materials', (
 test('teacher analytics view exposes filters, charts, student detail and AI report generation', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
   assert.match(html, /data-view="analytics"/);
-  for (const id of ['analytics-course', 'analytics-class', 'analytics-lesson', 'analytics-trend-chart', 'analytics-knowledge-chart', 'analytics-student-table', 'analytics-report-content']) {
+  for (const id of ['analytics-course', 'analytics-class', 'analytics-lesson', 'analytics-trend-chart', 'analytics-knowledge-chart', 'analytics-student-table', 'analytics-report-content', 'analytics-download-button']) {
     assert.match(html, new RegExp(`id="${id}"`));
   }
   assert.match(source, /api\(`\/api\/analytics/);
   assert.match(source, /api\('\/api\/analytics\/report'/);
+  assert.match(source, /\/api\/analytics\/report\/\$\{encodeURIComponent\(latestReport\.id\)\}\/download/);
   assert.match(source, /function renderTrendChart/);
   assert.match(source, /function renderKnowledgeChart/);
   assert.match(source, /RichText\.render\(\$\('#analytics-report-content'\)/);
@@ -126,6 +133,19 @@ test('teacher can create a class from a course roster and link courseware to mul
   assert.match(source, /\$\('#roster-form'\)\.requestSubmit\(\)/);
   assert.match(source, /classNames', JSON\.stringify/);
   assert.match(source, /\/api\/lessons\/\$\{encodeURIComponent\(lessonId\)\}\/classes/);
+});
+
+test('student tools stay compact and student report and exercise previews can be sent', () => {
+  const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
+  const css = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'extra.css'), 'utf8');
+  assert.match(html, /class="panel stack student-tools-panel"/);
+  assert.match(html, /class="student-add-card"/);
+  assert.match(css, /\.student-grid\{align-items:start\}/);
+  for (const id of ['report-send-button', 'report-email-button', 'personalized-exercise-dialog', 'personalized-exercise-send']) {
+    assert.match(html, new RegExp(`id="${id}"`));
+  }
+  assert.match(source, /\/publish-report/);
+  assert.match(source, /\/publish-exercises/);
 });
 
 test('teacher student directory separates classes and only renders the selected class roster', () => {

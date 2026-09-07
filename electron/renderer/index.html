@@ -110,12 +110,14 @@
               </section>
             </div>
           </div>
-          <div class="panel stack">
-            <div><h2>添加学生</h2><p class="muted">学号和姓名为必填项</p></div>
-            <form id="student-form" class="stack compact">
+          <div class="panel stack student-tools-panel">
+            <section class="student-add-card">
+              <div><h2>添加学生</h2><p class="muted">快速添加单个学生，学号和姓名为必填项</p></div>
+              <form id="student-form" class="stack compact">
               <div class="form-grid"><label><span>学号</span><input name="studentId" required></label><label><span>姓名</span><input name="name" required></label><label><span>课程</span><input name="courseName"></label><label><span>班级</span><input name="className"></label><label><span>邮箱</span><input name="email" type="email"></label><label><span>专业</span><input name="major"></label></div>
               <button class="button primary" type="submit">保存学生</button>
-            </form>
+              </form>
+            </section>
             <hr class="divider">
             <form id="roster-form" class="stack compact roster-form">
               <div><h2>用选课单建立班级</h2><p class="muted">自动识别课程代码、课程名称、学期、学号、姓名、专业、院系和性别。</p></div>
@@ -138,7 +140,7 @@
 
       <section id="view-analytics" class="view">
         <div class="panel analytics-filter-panel">
-          <div class="panel-heading"><div><h2>班级学情驾驶舱</h2><p>按课程、班级或教学周查看签到、作答与知识点掌握情况</p></div><button id="analytics-report-button" class="button primary" type="button">AI 生成学情报告</button></div>
+          <div class="panel-heading"><div><h2>班级学情驾驶舱</h2><p>按课程、班级或教学周查看签到、作答与知识点掌握情况</p></div><div class="analytics-report-actions"><a id="analytics-download-button" class="button secondary disabled" href="#" aria-disabled="true" download>下载报告</a><button id="analytics-report-button" class="button primary" type="button">AI 生成学情报告</button></div></div>
           <div class="analytics-filters">
             <label><span>课程</span><select id="analytics-course"></select></label>
             <label><span>班级</span><select id="analytics-class"></select></label>
@@ -201,7 +203,7 @@
           <hr class="divider">
           <form id="mail-form" class="stack compact">
             <div><h2>邮件发送</h2><p class="muted">用于学生报告和课次资料发送</p></div>
-            <div class="form-grid"><label><span>SMTP 主机</span><input name="host" placeholder="smtp.example.com"></label><label><span>端口</span><input name="port" type="number" value="465"></label><label><span>用户名</span><input name="username"></label><label><span>授权码 / 密码</span><input name="password" type="password" placeholder="留空保留当前值"></label><label><span>发件邮箱</span><input name="senderEmail" type="email"></label><label><span>发件人名称</span><input name="senderName" value="AI 教学助手"></label><label><span>安全模式</span><select name="security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></label><label><span>测试收件邮箱</span><input name="testRecipient" type="email"></label></div>
+            <div class="form-grid"><label><span>SMTP 主机</span><input name="host" placeholder="smtp.example.com"></label><label><span>端口</span><input name="port" type="number" value="465"></label><label><span>用户名</span><input name="username"></label><label><span>授权码 / 密码</span><input name="password" type="password" placeholder="留空保留当前值"></label><label><span>发件邮箱</span><input name="senderEmail" type="email"></label><label><span>发件人名称</span><input name="senderName" value="AI 教学助手"></label><label><span>学生默认邮箱后缀</span><input name="studentEmailSuffix" value="@m.fudan.edu.cn" placeholder="@m.fudan.edu.cn"><small>学生未填写邮箱时，自动使用“学号 + 此后缀”。</small></label><label><span>安全模式</span><select name="security"><option value="ssl">SSL</option><option value="starttls">STARTTLS</option></select></label><label><span>测试收件邮箱</span><input name="testRecipient" type="email"></label></div>
             <div class="inline"><button class="button secondary" type="submit">保存邮箱设置</button><button id="test-mail-button" class="button secondary" type="button">测试邮件</button></div>
           </form>
         </div>
@@ -227,7 +229,14 @@
 
   <dialog id="report-dialog">
     <div class="dialog-heading"><div><span class="badge">AI 学习诊断</span><h2 id="report-title">学生报告</h2></div><button id="report-close" class="icon-button">×</button></div>
+    <div class="dialog-actions"><button id="report-send-button" class="button primary" type="button">发送给学生</button><button id="report-email-button" class="button secondary" type="button">发送到学生邮箱</button></div>
     <div id="report-content" class="document-content markdown-body"></div>
+  </dialog>
+
+  <dialog id="personalized-exercise-dialog">
+    <div class="dialog-heading"><div><span class="badge">AI 个性化练习</span><h2 id="personalized-exercise-title">个性化习题</h2><p>确认题目后再发送到该学生的学习中心</p></div><button id="personalized-exercise-close" class="icon-button">×</button></div>
+    <div class="dialog-actions"><button id="personalized-exercise-send" class="button primary" type="button">发送给学生</button></div>
+    <div id="personalized-exercise-content" class="document-content markdown-body"></div>
   </dialog>
 
   <dialog id="courseware-preview-dialog">

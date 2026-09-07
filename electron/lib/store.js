@@ -22,7 +22,7 @@ const DEFAULT_STATE = {
     attendanceTimeoutMinutes: 1440,
     mail: {
       host: '', port: 465, security: 'ssl', username: '', passwordEncrypted: '',
-      senderEmail: '', senderName: 'AI 教学助手', studentEmailSuffix: '', testRecipient: '',
+      senderEmail: '', senderName: 'AI 教学助手', studentEmailSuffix: '@m.fudan.edu.cn', testRecipient: '',
     },
   },
   lessons: [],
@@ -228,6 +228,7 @@ class JsonStore {
       hasCustomAdminPassword: Boolean(settings.adminPasswordHash),
       mail: {
         ...(settings.mail || DEFAULT_STATE.settings.mail),
+        studentEmailSuffix: settings.mail?.studentEmailSuffix || DEFAULT_STATE.settings.mail.studentEmailSuffix,
         passwordEncrypted: undefined,
         hasPassword: Boolean(settings.mail?.passwordEncrypted),
       },
@@ -287,7 +288,7 @@ class JsonStore {
       username: String(values.username || '').trim(),
       senderEmail: String(values.senderEmail || '').trim(),
       senderName: String(values.senderName || '').trim() || 'AI 教学助手',
-      studentEmailSuffix: String(values.studentEmailSuffix || '').trim(),
+      studentEmailSuffix: String(values.studentEmailSuffix || DEFAULT_STATE.settings.mail.studentEmailSuffix).trim(),
       testRecipient: String(values.testRecipient || '').trim(),
     };
     if (String(values.password || '').trim()) current.passwordEncrypted = this.encryptSecret(String(values.password).trim());
@@ -297,7 +298,7 @@ class JsonStore {
 
   getMailSettings({ includePassword = false } = {}) {
     const mail = this.state.settings.mail || clone(DEFAULT_STATE.settings.mail);
-    return { ...mail, ...(includePassword ? { password: this.decryptSecret(mail.passwordEncrypted) } : {}), passwordEncrypted: undefined };
+    return { ...mail, studentEmailSuffix: mail.studentEmailSuffix || DEFAULT_STATE.settings.mail.studentEmailSuffix, ...(includePassword ? { password: this.decryptSecret(mail.passwordEncrypted) } : {}), passwordEncrypted: undefined };
   }
 
   setModelOptions(models) {

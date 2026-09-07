@@ -254,6 +254,50 @@ test('教师可以查看班级学情图表数据并生成可保存的 AI 报告'
   assert.equal(aiRequest.model, 'test-model');
   assert.match(aiRequest.messages[0].content, /未作答只影响完成率/);
 
+  const download = await fetch(`${base}/api/analytics/report/${generated.body.report.id}/download`, { headers: { Cookie: adminCookie } });
+  assert.equal(download.status, 200);
+  assert.match(download.headers.get('content-type'), /text\/html/);
+  assert.match(download.headers.get('content-disposition'), /attachment/);
+  const downloadedReport = await download.text();
+  assert.match(downloadedReport, /RichText\.render/);
+  assert.match(downloadedReport, /函数是当前薄弱知识点/);
+  assert.match(downloadedReport, /data:font\/woff2;base64,/);
+  assert.doesNotMatch(downloadedReport, /(?:src|href)="\//);
+
   const refreshed = await json(`${base}/api/analytics?courseName=${encodeURIComponent('数学')}&className=${encodeURIComponent('一班')}`, { headers: { Cookie: adminCookie } });
   assert.match(refreshed.body.latestReport.markdown, /班级学情报告/);
+});
+
+test('学生报告与个性化习题经教师确认发送后才在学生端可见', async (context) => {
+  const runtimeDir = fs.mkdtempSync(path.join(os.tmpdir(), 'aiaid-student-send-'));
+  const rendererDir = path.join(__dirname, '..', 'renderer');
+  const server = await createLanServer({ runtimeDir, rendererDir, preferredPort: 0 });
+  context.after(() => server.close());
+  const base = `http://127.0.0.1:${server.port}`;
+  server.store.addLessons([{ id: 'send-week', title: '程序设计第 1 周', courseName: '程序设计', className: '一班', classNames: ['一班'], teachingWeek: 1, status: 'done', aiResult: '教学内容' }]);
+  server.store.upsertStudent({ studentId: 'SEND001', name: '发送测试', courseName: '程序设计', className: '一班' });
+  server.store.addExercises([{ id: 'personal-draft', lessonId: 'send-week', targetStudentId: 'SEND001', published: false, type: 'choice', question: '1 + 1 = ?', answer: '2' }]);
+  server.store.state.studentReports.push({ id: 'report-draft', studentId: 'SEND001', markdown: '# 学习诊断', published: false });
+  server.store.save();
+
+  const adminLogin = await json(`${base}/api/auth/admin`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ password: 'admin' }) });
+  const adminCookie = adminLogin.response.headers.get('set-cookie').split(';')[0];
+  const adminState = await json(`${base}/api/state`, { headers: { Cookie: adminCookie } });
+  assert.equal(adminState.body.students.find((item) => item.studentId === 'SEND001').email, 'SEND001@m.fudan.edu.cn');
+  const studentLogin = await json(`${base}/api/auth/student`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ studentId: 'SEND001', className: '一班' }) });
+  const studentCookie = studentLogin.response.headers.get('set-cookie').split(';')[0];
+  const before = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
+  assert.equal(before.body.report, null);
+  assert.equal(before.body.exercises.length, 0);
+
+  const sentReport = await json(`${base}/api/students/SEND001/publish-report`, { method: 'POST', headers: { Cookie: adminCookie } });
+  assert.equal(sentReport.body.report.published, true);
+  const sentExercises = await json(`${base}/api/students/SEND001/publish-exercises`, {
+    method: 'POST', headers: { Cookie: adminCookie, 'Content-Type': 'application/json' }, body: JSON.stringify({ exerciseIds: ['personal-draft'] }),
+  });
+  assert.equal(sentExercises.body.count, 1);
+
+  const after = await json(`${base}/api/student/state`, { headers: { Cookie: studentCookie } });
+  assert.match(after.body.report.markdown, /学习诊断/);
+  assert.deepEqual(after.body.exercises.map((item) => item.id), ['personal-draft']);
 });
