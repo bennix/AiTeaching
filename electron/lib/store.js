@@ -477,7 +477,7 @@ class JsonStore {
     return record;
   }
 
-  upsertStudents(students, { preserveExisting = false, preview = false } = {}) {
+  upsertStudents(students, { preserveExisting = false, preview = false, syncScope = null } = {}) {
     let added = 0;
     let updated = 0;
     let existingCount = 0;
@@ -495,11 +495,22 @@ class JsonStore {
       if (existing) { Object.assign(existing, record); updated += 1; }
       else { this.state.students.push(record); added += 1; }
     }
+    const scopeStudents = syncScope ? this.state.students.filter((item) =>
+      sameCatalogName(item.courseName, syncScope.courseName) && sameCatalogName(item.className, syncScope.className)) : [];
+    const removedIds = scopeStudents.map((item) => item.studentId).filter((studentId) => !seen.has(studentId));
+    if (!preview && removedIds.length) {
+      const removed = new Set(removedIds);
+      this.state.students = this.state.students.filter((item) => !removed.has(item.studentId));
+      this.state.submissions = this.state.submissions.filter((item) => !removed.has(item.studentId));
+      this.state.attendance = this.state.attendance.filter((item) => !removed.has(item.studentId));
+      this.state.exercises = this.state.exercises.filter((item) => !removed.has(item.targetStudentId));
+      this.state.studentReports = this.state.studentReports.filter((item) => !removed.has(item.studentId));
+    }
     if (!preview) {
       linkPendingLessons(this.state);
       this.save();
     }
-    return { added, updated, existing: existingCount };
+    return { added, updated, existing: existingCount, removed: removedIds.length };
   }
 
   deleteStudent(studentId) {

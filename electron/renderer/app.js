@@ -901,14 +901,14 @@ $('#roster-form').addEventListener('submit', async (event) => {
     const previewData = new FormData(formElement);
     previewData.set('preview', 'true');
     const preview = await api('/api/students/import', { method: 'POST', body: previewData });
-    if (!confirm(`导入到：${preview.courseName} · ${preview.className}\n新增 ${preview.added} 名，已有 ${preview.existing} 名保持不变。\n所有原有学生和学习记录均保留。${preview.warning ? `\n${preview.warning}` : ''}\n确认导入？`)) {
+    if (!confirm(`同步到：${preview.courseName} · ${preview.className}\n新增 ${preview.added} 名，已有 ${preview.existing} 名及其记录保持不变，删除 ${preview.removed} 名。\n被删除学生的签到、作答、报告和个性化习题也会删除。${preview.warning ? `\n${preview.warning}` : ''}\n确认同步？`)) {
       status.textContent = '已取消，未修改任何学生或学习记录。';
       return;
     }
     const result = await api('/api/students/import', { method: 'POST', body: new FormData(formElement) });
     status.className = `roster-import-status success${result.warning ? ' warning' : ''}`;
-    status.innerHTML = `<strong>增量导入完成</strong><span>${escapeHtml(result.courseName || '未命名课程')} · ${escapeHtml(result.className || '未命名班级')}</span><small>新增 ${result.added} 名，已有 ${result.existing} 名保持不变；所有历史学习记录已保留。</small>${result.warning ? `<em>${escapeHtml(result.warning)}</em>` : ''}`;
-    toast(`新增 ${result.added} 名学生，已有学生及记录保持不变`, false, Boolean(result.warning));
+    status.innerHTML = `<strong>名册同步完成</strong><span>${escapeHtml(result.courseName || '未命名课程')} · ${escapeHtml(result.className || '未命名班级')}</span><small>新增 ${result.added} 名，保留 ${result.existing} 名，删除 ${result.removed} 名。</small>${result.warning ? `<em>${escapeHtml(result.warning)}</em>` : ''}`;
+    toast(`名册已同步：新增 ${result.added} 名，删除 ${result.removed} 名`, false, Boolean(result.warning));
     $('#roster-file').value = '';
     $('#roster-file-label').textContent = '继续选择另一份选课单';
     await refresh();
@@ -918,7 +918,7 @@ $('#roster-form').addEventListener('submit', async (event) => {
     toast(error.message, true);
   } finally {
     button.disabled = false;
-    button.textContent = '预览并增量导入';
+    button.textContent = '预览并同步名册';
   }
 });
 

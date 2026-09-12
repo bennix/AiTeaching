@@ -814,7 +814,11 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
           }));
         }
         const preview = fields.preview === 'true';
-        const imported = store.upsertStudents(roster.students, { preserveExisting: true, preview });
+        const imported = store.upsertStudents(roster.students, {
+          preserveExisting: true,
+          preview,
+          syncScope: { courseName: roster.courseName, className: roster.className },
+        });
         const warning = roster.expectedCount && roster.expectedCount !== roster.students.length
           ? `表头显示 ${roster.expectedCount} 人，实际识别 ${roster.students.length} 人，请检查选课单。`
           : '';
@@ -824,6 +828,7 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
           added: imported.added,
           updated: imported.updated,
           existing: imported.existing,
+          removed: imported.removed,
           preview,
           courseName: roster.courseName,
           className: roster.className,

@@ -134,7 +134,7 @@ test('teacher analytics view exposes filters, charts, student detail and AI repo
 test('teacher can create a class from a course roster and link courseware to multiple classes', () => {
   const html = fs.readFileSync(path.join(__dirname, '..', 'renderer', 'index.html'), 'utf8');
   assert.match(html, /id="roster-file"[^>]*accept="\.csv,\.xlsx"/);
-  assert.match(html, /增量导入选课单/);
+  assert.match(html, /同步导入选课单/);
   assert.match(html, /id="roster-target-class"/);
   assert.match(html, /id="import-class-picker"/);
   assert.match(html, /id="courseware-class-dialog"/);

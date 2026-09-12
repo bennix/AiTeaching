@@ -60,12 +60,12 @@ test('选课单一键建立班级，教案与课件可关联多个班级', async
   server.store.upsertStudent({ studentId: 'S001', name: '学生甲', email: 'saved@example.com' });
   const original = JSON.parse(JSON.stringify(server.store.state.students));
   const records = {
-    attendance: [{ id: 'check-in', studentId: 'S001' }],
-    submissions: [{ id: 'answer', studentId: 'S001' }],
-    studentReports: [{ id: 'report', studentId: 'S001', content: '已生成' }],
+    attendance: [{ id: 'kept-check-in', studentId: 'S001' }, { id: 'removed-check-in', studentId: 'S002' }],
+    submissions: [{ id: 'kept-answer', studentId: 'S001' }, { id: 'removed-answer', studentId: 'S002' }],
+    studentReports: [{ id: 'kept-report', studentId: 'S001', content: '已生成' }, { id: 'removed-report', studentId: 'S002' }],
+    exercises: [{ id: 'removed-exercise', targetStudentId: 'S002' }],
   };
   Object.assign(server.store.state, records);
-  const beforeRecords = JSON.stringify(records);
   const incrementalForm = () => {
     const form = new FormData();
     form.set('rosterFile', new Blob(['学号,姓名,邮箱\nS001,改变姓名,\nS004,学生丁,\nS004,学生丁,']), '更新.csv');
@@ -77,15 +77,22 @@ test('选课单一键建立班级，教案与课件可关联多个班级', async
   const preview = await json(`${base}/api/students/import`, { method: 'POST', headers: { Cookie: cookie }, body: previewForm });
   assert.equal(preview.body.added, 1);
   assert.equal(preview.body.existing, 1);
+  assert.equal(preview.body.removed, 1);
   assert.deepEqual(server.store.state.students, original, 'preview is read-only');
   const incremental = await json(`${base}/api/students/import`, { method: 'POST', headers: { Cookie: cookie }, body: incrementalForm() });
   assert.equal(incremental.body.added, 1);
-  assert.deepEqual(server.store.state.students.slice(0, 2), original, 'existing and absent students stay unchanged');
+  assert.equal(incremental.body.removed, 1);
+  assert.equal(server.store.state.students.some((s) => s.studentId === 'S002'), false, 'students absent from the new roster are removed');
+  assert.equal(server.store.state.students.find((s) => s.studentId === 'S001').email, 'saved@example.com', 'listed students and their details stay unchanged');
   assert.equal(server.store.state.students.find((s) => s.studentId === 'S004').className, '教学班 MATH001.01');
-  assert.equal(JSON.stringify(Object.fromEntries(Object.keys(records).map((key) => [key, server.store.state[key]]))), beforeRecords);
+  assert.deepEqual(server.store.state.attendance.map((item) => item.studentId), ['S001']);
+  assert.deepEqual(server.store.state.submissions.map((item) => item.studentId), ['S001']);
+  assert.deepEqual(server.store.state.studentReports.map((item) => item.studentId), ['S001']);
+  assert.equal(server.store.state.exercises.length, 0);
   const repeated = await json(`${base}/api/students/import`, { method: 'POST', headers: { Cookie: cookie }, body: incrementalForm() });
   assert.equal(repeated.body.added, 0);
   assert.equal(repeated.body.existing, 2);
+  assert.equal(repeated.body.removed, 0);
   // Restore the unrelated fixture records before testing lesson visibility.
   Object.keys(records).forEach((key) => { server.store.state[key] = []; });
 
