@@ -57,6 +57,38 @@ test('选课单一键建立班级，教案与课件可关联多个班级', async
   assert.equal(imported.body.className, '教学班 MATH001.01');
   assert.deepEqual([imported.body.count, imported.body.added, imported.body.updated], [2, 2, 0]);
 
+  server.store.upsertStudent({ studentId: 'S001', name: '学生甲', email: 'saved@example.com' });
+  const original = JSON.parse(JSON.stringify(server.store.state.students));
+  const records = {
+    attendance: [{ id: 'check-in', studentId: 'S001' }],
+    submissions: [{ id: 'answer', studentId: 'S001' }],
+    studentReports: [{ id: 'report', studentId: 'S001', content: '已生成' }],
+  };
+  Object.assign(server.store.state, records);
+  const beforeRecords = JSON.stringify(records);
+  const incrementalForm = () => {
+    const form = new FormData();
+    form.set('rosterFile', new Blob(['学号,姓名,邮箱\nS001,改变姓名,\nS004,学生丁,\nS004,学生丁,']), '更新.csv');
+    form.set('targetClass', JSON.stringify({ courseName: '高一数学', className: '教学班 MATH001.01' }));
+    return form;
+  };
+  const previewForm = incrementalForm();
+  previewForm.set('preview', 'true');
+  const preview = await json(`${base}/api/students/import`, { method: 'POST', headers: { Cookie: cookie }, body: previewForm });
+  assert.equal(preview.body.added, 1);
+  assert.equal(preview.body.existing, 1);
+  assert.deepEqual(server.store.state.students, original, 'preview is read-only');
+  const incremental = await json(`${base}/api/students/import`, { method: 'POST', headers: { Cookie: cookie }, body: incrementalForm() });
+  assert.equal(incremental.body.added, 1);
+  assert.deepEqual(server.store.state.students.slice(0, 2), original, 'existing and absent students stay unchanged');
+  assert.equal(server.store.state.students.find((s) => s.studentId === 'S004').className, '教学班 MATH001.01');
+  assert.equal(JSON.stringify(Object.fromEntries(Object.keys(records).map((key) => [key, server.store.state[key]]))), beforeRecords);
+  const repeated = await json(`${base}/api/students/import`, { method: 'POST', headers: { Cookie: cookie }, body: incrementalForm() });
+  assert.equal(repeated.body.added, 0);
+  assert.equal(repeated.body.existing, 2);
+  // Restore the unrelated fixture records before testing lesson visibility.
+  Object.keys(records).forEach((key) => { server.store.state[key] = []; });
+
   server.store.upsertStudent({ studentId: 'S003', name: '学生丙', courseName: '高一数学', className: '教学班 MATH001.02' });
   const lessonForm = new FormData();
   lessonForm.set('scope', 'week');

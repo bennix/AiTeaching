@@ -803,7 +803,18 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
         if (!['.csv', '.xlsx'].includes(extension)) throw new Error('选课单仅支持 CSV 或 XLSX');
         const rows = extension === '.csv' ? parseCsv(file.buffer.toString('utf8')) : await readXlsxFile(file.buffer);
         const roster = parseRosterRows(rows, fields);
-        const imported = store.upsertStudents(roster.students);
+        if (fields.targetClass) {
+          const target = JSON.parse(fields.targetClass);
+          const member = store.state.students.find((item) => item.courseName === target.courseName && item.className === target.className);
+          if (!member) throw new Error('目标班级已不存在，请刷新后重新选择');
+          Object.assign(roster, { courseName: member.courseName, className: member.className });
+          roster.students.forEach((student) => Object.assign(student, {
+            courseName: member.courseName, className: member.className,
+            courseCode: member.courseCode || '', term: member.term || '',
+          }));
+        }
+        const preview = fields.preview === 'true';
+        const imported = store.upsertStudents(roster.students, { preserveExisting: true, preview });
         const warning = roster.expectedCount && roster.expectedCount !== roster.students.length
           ? `表头显示 ${roster.expectedCount} 人，实际识别 ${roster.students.length} 人，请检查选课单。`
           : '';
@@ -812,6 +823,8 @@ async function createLanServer({ runtimeDir, rendererDir, preferredPort = 5000 }
           count: roster.students.length,
           added: imported.added,
           updated: imported.updated,
+          existing: imported.existing,
+          preview,
           courseName: roster.courseName,
           className: roster.className,
           courseCode: roster.courseCode,

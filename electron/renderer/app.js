@@ -279,6 +279,11 @@ function showPersonalizedExerciseBatch(student, batches, selectedId = '') {
 function renderStudents() {
   const students = state.data.students || [];
   const classGroups = studentClassGroups(students);
+  const rosterTarget = $('#roster-target-class');
+  const previousTarget = rosterTarget.value;
+  const targets = [...new Map(students.filter((s) => s.courseName && s.className).map((s) => [JSON.stringify({ courseName: s.courseName, className: s.className }), s])).entries()];
+  rosterTarget.innerHTML = '<option value="">自动识别课程与班级</option>' + targets.map(([value, s]) => `<option value="${escapeHtml(value)}">${escapeHtml(s.courseName)} · ${escapeHtml(s.className)}</option>`).join('');
+  if (targets.some(([value]) => value === previousTarget)) rosterTarget.value = previousTarget;
   const selectedGroup = classGroups.find((group) => group.key === state.activeStudentClassKey) || classGroups[0] || null;
   state.activeStudentClassKey = selectedGroup?.key || '';
   $('#student-total').textContent = students.length;
@@ -893,10 +898,17 @@ $('#roster-form').addEventListener('submit', async (event) => {
   status.className = 'roster-import-status loading';
   status.textContent = `正在读取 ${file.name}，识别课程、班级和学生名单…`;
   try {
+    const previewData = new FormData(formElement);
+    previewData.set('preview', 'true');
+    const preview = await api('/api/students/import', { method: 'POST', body: previewData });
+    if (!confirm(`导入到：${preview.courseName} · ${preview.className}\n新增 ${preview.added} 名，已有 ${preview.existing} 名保持不变。\n所有原有学生和学习记录均保留。${preview.warning ? `\n${preview.warning}` : ''}\n确认导入？`)) {
+      status.textContent = '已取消，未修改任何学生或学习记录。';
+      return;
+    }
     const result = await api('/api/students/import', { method: 'POST', body: new FormData(formElement) });
     status.className = `roster-import-status success${result.warning ? ' warning' : ''}`;
-    status.innerHTML = `<strong>班级建立完成</strong><span>${escapeHtml(result.courseName || '未命名课程')} · ${escapeHtml(result.className || '未命名班级')}</span><small>共 ${result.count} 名学生：新增 ${result.added} 名，更新 ${result.updated} 名${result.term ? ` · ${escapeHtml(result.term)}` : ''}</small>${result.warning ? `<em>${escapeHtml(result.warning)}</em>` : ''}`;
-    toast(`已建立 ${result.className || '班级'}，导入 ${result.count} 名学生`, false, Boolean(result.warning));
+    status.innerHTML = `<strong>增量导入完成</strong><span>${escapeHtml(result.courseName || '未命名课程')} · ${escapeHtml(result.className || '未命名班级')}</span><small>新增 ${result.added} 名，已有 ${result.existing} 名保持不变；所有历史学习记录已保留。</small>${result.warning ? `<em>${escapeHtml(result.warning)}</em>` : ''}`;
+    toast(`新增 ${result.added} 名学生，已有学生及记录保持不变`, false, Boolean(result.warning));
     $('#roster-file').value = '';
     $('#roster-file-label').textContent = '继续选择另一份选课单';
     await refresh();
@@ -906,14 +918,13 @@ $('#roster-form').addEventListener('submit', async (event) => {
     toast(error.message, true);
   } finally {
     button.disabled = false;
-    button.textContent = '导入选课单并建立班级';
+    button.textContent = '预览并增量导入';
   }
 });
 
 $('#roster-file').addEventListener('change', (event) => {
   const file = event.target.files[0];
   $('#roster-file-label').textContent = file?.name || '选择选课单，一键建立班级';
-  if (file) $('#roster-form').requestSubmit();
 });
 
 $('#class-material-form').addEventListener('submit', async (event) => {

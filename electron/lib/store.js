@@ -477,21 +477,29 @@ class JsonStore {
     return record;
   }
 
-  upsertStudents(students) {
+  upsertStudents(students, { preserveExisting = false, preview = false } = {}) {
     let added = 0;
     let updated = 0;
+    let existingCount = 0;
+    const seen = new Set();
     for (const student of students) {
       const studentId = String(student.studentId || '').trim();
       const name = String(student.name || '').trim();
       if (!studentId || !name) continue;
+      if (seen.has(studentId)) continue;
+      seen.add(studentId);
       const existing = this.state.students.find((item) => item.studentId === studentId);
+      if (existing && preserveExisting) { existingCount += 1; continue; }
+      if (preview) { if (existing) updated += 1; else added += 1; continue; }
       const record = { id: existing?.id || crypto.randomUUID(), ...existing, ...student, studentId, name, updatedAt: new Date().toISOString() };
       if (existing) { Object.assign(existing, record); updated += 1; }
       else { this.state.students.push(record); added += 1; }
     }
-    linkPendingLessons(this.state);
-    this.save();
-    return { added, updated };
+    if (!preview) {
+      linkPendingLessons(this.state);
+      this.save();
+    }
+    return { added, updated, existing: existingCount };
   }
 
   deleteStudent(studentId) {

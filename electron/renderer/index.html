@@ -120,11 +120,12 @@
             </section>
             <hr class="divider">
             <form id="roster-form" class="stack compact roster-form">
-              <div><h2>用选课单建立班级</h2><p class="muted">自动识别课程代码、课程名称、学期、学号、姓名、专业、院系和性别。</p></div>
+              <div><h2>增量导入选课单</h2><p class="muted">按学号去重，只新增学生；已有学生及签到、作答、报告保持不变，名单中缺少的学生也会保留。</p></div>
+              <label><span>导入目标</span><select id="roster-target-class" name="targetClass"><option value="">自动识别课程与班级</option></select></label>
               <label class="file-drop roster-drop"><input id="roster-file" type="file" name="rosterFile" accept=".csv,.xlsx" required><span class="file-icon">⇧</span><strong id="roster-file-label">选择选课单，一键建立班级</strong><small>支持学校上课点名表 XLSX，也兼容标准 CSV 名册</small></label>
               <div id="roster-import-status" class="roster-import-status" hidden></div>
               <details class="advanced-import"><summary>高级设置：手动覆盖识别结果</summary><div class="form-grid"><label><span>课程名称（可选）</span><input name="courseName" placeholder="默认从表格自动识别"></label><label><span>班级名称（可选）</span><input name="className" placeholder="默认使用教学班课程代码"></label></div></details>
-              <button id="roster-import-button" class="button secondary" type="submit">导入选课单并建立班级</button>
+              <button id="roster-import-button" class="button secondary" type="submit">预览并增量导入</button>
             </form>
             <hr class="divider">
             <form id="class-material-form" class="stack compact">
